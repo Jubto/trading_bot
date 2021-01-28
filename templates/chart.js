@@ -33,6 +33,7 @@ var candleSeries = chart.addCandlestickSeries({
   wickUpColor: 'rgba(255, 144, 0, 1)',
 });
 
+// Could make a candle graph of sell score
 candleSeries.setData([
 	{ time: '2018-10-19', open: 180.34, high: 180.99, low: 178.57, close: 179.85 },
 	{ time: '2018-10-22', open: 180.82, high: 181.40, low: 177.56, close: 178.75 },
