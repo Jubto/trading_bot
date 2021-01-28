@@ -1,0 +1,45 @@
+<html>  
+    <head>  
+        <title> CandleView </title>
+        <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script> 
+    </head>
+
+    <body>
+        <h1>Chart</h1>
+        <div id='chart'></div>
+
+        <div id = "trades"> </div>
+
+        <h3>Settings</h3>
+        <div id="settings">
+            <label>RSI</label> 
+            <input type="checkbox">
+            <div>
+                Length
+                <input type="text" name="rsi_length" id="rsi_length" placeholder="Enter int">
+                Overbought
+                <input type="text" name="rsi_overbought" id="rsi_overbought" placeholder="70">
+                Oversold
+                <input type="text" name="rsi_oversold" id="rsi_oversold" placeholder="30">
+            </div>
+        </div> 
+
+        <script>
+            /*
+            var binanceSocket = new WebSocket("wss://stream.binance.com:9443/ws/injbtc@trade");
+            
+            var tradeDiv = document.getElementById('trades')
+
+            binanceSocket.onmessage = function (event) {
+                console.log(event.data);
+                var messageobject = JSON.parse(event.data)
+                tradeDiv.append(messageobject.p)
+            }
+            */
+        </script>
+
+        <script src='chart.js'></script> <!--keep excess javascript in seperate file, source = chart.js -->
+
+    </body>
+
+</html>
