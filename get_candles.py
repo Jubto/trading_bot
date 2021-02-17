@@ -21,7 +21,7 @@ class Coin():
 	EARLIEST_DATE = "1 Jan, 2017" # Date binance started
 
 	def __init__(self, coin_symbol, coin_name=None):
-		os.chdir(os.path.dirname(os.path.realpath(__file__)))
+		os.path.dirname(os.path.realpath(__file__))
 		data_path = os.path.abspath('coindata')
 		coin_path = os.path.join(data_path, coin_symbol)
 		if not os.path.exists(coin_path):
@@ -87,26 +87,26 @@ class Coin():
 	def remove_tradingpair(self, tradingpair):
 		'''Handles removal of trading pair from given coin'''
 
-		os.chdir(self.coin_path)
-		files = glob(self.coin_symbol + tradingpair + '*')
-		if len(files) > 0:
-			for f in files:
+		files = self.list_saved_files()
+		if files == None:
+			return None
+		trim = len(self.coin_symbol)
+		for f in files:
+			if tradingpair == f.split('_')[0][trim:]:
 				os.remove(self.coin_path + '/' + f)
-			print(f'All files assoicated with {self.coin_symbol}{tradingpair} have been removed.')
-		else:
-			print(f'{self.coin_symbol} coin has no trading pair {tradingpair} stored in the database.')
+		print(f'All files assoicated with {self.coin_symbol}{tradingpair} have been removed.')
 
 	def remove_coin(self):
 		'''Handles removing coin'''
 
-		os.chdir(self.coin_path)
-		files = glob('*')
+		files = self.list_saved_files()
+		if files == None:
+			return None
 		for f in files:
 			os.remove(self.coin_path + '/' + f)
+		os.rmdir(self.coin_path)
 		print(f'All assoicated files for {self.coin_symbol} have been removed.')
-		if len(glob('*')) == 0:
-			os.rmdir(self.coin_path)
-			print(f'All assoicated directories for {self.coin_symbol} have been removed.')
+
 
 	@staticmethod	
 	def csv_maker(file_path, mode, klines):
@@ -178,11 +178,13 @@ class Coin():
 	def list_saved_files(self):
 		'''Returns a list of all csv files of coin object. If no csv files are present, raises exception.'''
 
-		os.chdir(self.coin_path) # problem is likely here. Make it so you don't have to change directory, rather, just find the path some other way.
-		if len(glob(self.coin_symbol + '*')) == 0:
-			print(f'CURRENT directory is: {self.coin_path} and coin {self.coin_symbol}, number of files are: {len(glob(self.coin_symbol + '*'))}')
-			raise Exception(f'{self.coin_symbol} object has no saved csv data, please run the get_candles method to obtain data.')
-		return glob(self.coin_symbol + '*')
+		file_paths = self.coin_path + '/' + self.coin_symbol + '*'
+		files = glob(file_paths)
+		if len(files) == 0:
+			print(f'WARNING: database has no coin {self.coin_symbol} stored. Please run get_candles method to obtain its data.')
+			return None
+		file_names = [f.split('/')[-1] for f in files]
+		return file_names # List of csv file names, e.g. INJBTC_4h.csv (list does not include json file).
 
 
 	def create_json_object(self, *options):
@@ -196,8 +198,8 @@ class Coin():
 				csv_files = options[0]
 
 		for csvfile in csv_files:
-			symbol = csvfile[:-7] # Parent key
-			timeframe = {csvfile[-6:-4]:{'candle_change':[], 'candle_amplitude':[], 'candle_max_up':[], 'candle_max_down':[]}} 
+			symbol = csvfile.split('_')[0] # Parent key
+			timeframe = {csvfile.split('_')[1].split('.')[0]:{'candle_change':[], 'candle_amplitude':[], 'candle_max_up':[], 'candle_max_down':[]}} 
 			try:
 				symbol_timeframe[symbol].update(timeframe)
 			except KeyError:

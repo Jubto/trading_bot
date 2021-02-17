@@ -22,7 +22,7 @@ class Notification_server():
     PORT = 13337 
     IP_ADDRESS = socket.gethostbyname(socket.gethostname())
     SERVER_SPEED = 5 # Deafult server tick speed.
-    REQUEST_INTERVAL = 120 # Deafult server Binance candle request interval.
+    REQUEST_INTERVAL = 60 # Deafult server Binance candle request interval.
     MONITORED_COINS = {} # Dict of coins server is currently monitoring. 
     MESSAGE_BACKLOG = [] # List of messages for server_stdout() to process in order. 
     SERVER_COMMANDS = ['']
@@ -37,12 +37,13 @@ class Notification_server():
         self.tickspeed_handler.set()
         self.root_path = os.path.dirname(os.path.realpath(__file__))
         self.data_path = self.root_path + '/coindata'
-		if not os.path.exists(self.data_path):
-			os.mkdir(self.data_path)
+        if not os.path.exists(self.data_path):
+            os.mkdir(self.data_path)
 
         if coin_symbols:
             for coin_symbol in coin_symbols:
-                Thread(target=self.monitor_coin, name=coin_symbol, args=(coin_symbol), daemon=True).start() # Start monitoring each coin in their own named thread.
+                coin_symbol = coin_symbol.upper()
+                Thread(target=self.monitor_coin, name=coin_symbol, args=(coin_symbol,), daemon=True).start() # Start monitoring each coin in their own named thread.
         else:
             self.monitor_all_saved_coins() # Monitor all coins stored in coindata, if no coins, then prompt user input. 
 
@@ -63,33 +64,34 @@ class Notification_server():
         '''This method starts the monitoring thread of given coin. This thread allows the server to monitor multiple coins at once.'''
 
         coin = Coin(coin_symbol, coin_name) # Create new coin object to monitor. If coin isn't saved locally, new coin will be saved if valid.
+        files = coin.list_saved_files()
 
-        os.chdir(coin.coin_path) 
-        if len(glob(coin_symbol + '*')) == 0:          
+        if len(files) == 0:     
             if tradingpair:
                 if coin.get_candles(tradingpair, *timeframes):
                     print(f'\nServer will start monitoring {coin_symbol}{tradingpair}.')
                 else:
-                    print(f'{coin_symbol} is not avaliable on Binance.')
+                    print(f'{coin_symbol} is not avaliable on Binance.1')
                     return 0 # Close thread.
             elif coin.get_candles('USDT', *timeframes):
                 tradingpair = 'USDT'
                 print(f'\nServer will start monitoring {coin_symbol}USDT by deafult.')
             else:
-                print(f'{coin_symbol} is not avaliable on Binance.')
+                print(f'{coin_symbol} is not avaliable on Binance.2')
                 return 0 # Close thread. 
         elif tradingpair:
             # Server already has coin, potentially adding new tradingpair.
             if coin.get_candles(tradingpair, *timeframes):
                 print(f'Server will start monitoring {coin_symbol}{tradingpair}.')
             else:
-                print(f'{coin_symbol}{tradingpair} is not avaliable on Binance.')
+                print(f'{coin_symbol}{tradingpair} is not avaliable on Binance.3')
                 return 0 # Close thread. 
         
+        files = coin.list_saved_files() # Files may have had additional csv added to it. 
         self.SERVER_INSTRUCTION['added_coin'] = 1 # Notify that a coin, tradingpair or timeframe has been added.
         self.MONITORED_COINS[coin_symbol] = []
         print(f'Server will start monitoring {coin_symbol + tradingpair}.\n') if tradingpair else print(f'Server will start monitoring {coin_symbol}.\n')
-        for c in glob(coin_symbol + '*'):
+        for c in files:
             c = c.split('.')[0]
             self.MONITORED_COINS[coin_symbol].append(c)
 
@@ -332,16 +334,16 @@ class Notification_server():
     def monitor_all_saved_coins(self):
         '''When invoked, server will start monitoring all coins saved locally'''
 
-        os.chdir(self.data_path)
-        coins = glob('*')
+        coins = glob(self.data_path) 
         if len(coins) == 0:
             self.monitor_new()
             return 0
         for coin in coins:
+            coin = coin.split('/')[-1]
             self.add_new_coin(coin)
     
     def drop_coin(self):
-        '''Handles dropping a coin from being monitored and removes from database if requested'''
+        '''Handles dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested'''
         pass
         #TODO
 
