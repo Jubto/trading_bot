@@ -8,13 +8,15 @@ import time
 import json 
 
 
-
 class Notification_server():
     '''
-    To start server: Run server file with the following arguments like the example below:
-    python3 notification_server.py INJ injective_protocol 5  
-    Where argument 1 is coin_symbol, 2 is coin_name, 3 is how often server will request Binance for candles in minutes.      
-    Deafult server refresh rate is 10 seconds, deafult candle request period is 3 minutes.
+    Start server with 0 or more coin symbols to monitor, for example: 
+
+    python3 notification_server.py INJ RVN MONA BTC 
+
+    When 0 args are given, server will monitor all coins stored in database. 
+
+    Enter 'commands' to view all avaliable server commands.  
     '''
 
     PORT = 13337 
@@ -40,9 +42,9 @@ class Notification_server():
 
         if coin_symbols:
             for coin_symbol in coin_symbols:
-                Thread(target=self.monitor_coin, name=coin_symbol, args=(coin_symbol), daemon=True).start()
+                Thread(target=self.monitor_coin, name=coin_symbol, args=(coin_symbol), daemon=True).start() # Start monitoring each coin in their own named thread.
         else:
-            self.monitor_all_saved_coins()
+            self.monitor_all_saved_coins() # Monitor all coins stored in coindata, if no coins, then prompt user input. 
 
         self.server_start()
         Thread(target=self.server_tick_speed, daemon=True).start() # Global server tick speed.
@@ -387,5 +389,3 @@ else:
 
 print("Server shut down.")
 # Main thread ends here. 
-# TODO make it so when starting the server, you just enter a list of coin symbols to monitor
-# TODO For 'monitor' command, make it so you can enter multiple trading pairs in one go
