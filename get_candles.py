@@ -1,8 +1,8 @@
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config import API_KEY, API_SECRET
-from datetime import datetime
 from glob import glob
+from time import time
 import json 
 import csv
 import os
@@ -34,6 +34,7 @@ class Coin():
 		self.coin_name = coin_name 
 		self.coin_path = coin_path
 		self.json_file = self.coin_path + '/' + 'analysis' + '_' +  self.coin_symbol + '.json'
+		self.previous_update_UTC = None
 
 	def get_candles(self, tradingpair, *intervals):
 		'''
@@ -69,7 +70,10 @@ class Coin():
 			except BinanceAPIException:
 				# If trading pair does not exist, coin object will remove all assoicated files and directories. 
 				print(f'API exception, please ensure trading pair {symbol} exists.')
-				self.remove_coin()
+				if self.list_saved_files():
+					self.remove_tradingpair(tradingpair.upper()) # Means coin symbol exists however trading pair does not exist in Binance.
+				else:
+					self.remove_coin() # Means coin symbol does not exist in Binance.
 				return 0
 		self.create_json_file()
 		return 1
@@ -88,8 +92,6 @@ class Coin():
 		'''Handles removal of trading pair from given coin'''
 
 		files = self.list_saved_files()
-		if files == None:
-			return None
 		trim = len(self.coin_symbol)
 		for f in files:
 			if tradingpair == f.split('_')[0][trim:]:
@@ -100,22 +102,20 @@ class Coin():
 		'''Handles removing coin'''
 
 		files = self.list_saved_files()
-		if files == None:
-			return None
 		for f in files:
 			os.remove(self.coin_path + '/' + f)
 		os.rmdir(self.coin_path)
 		print(f'All assoicated files for {self.coin_symbol} have been removed.')
 
 
-	@staticmethod	
-	def csv_maker(file_path, mode, klines):
+	def csv_maker(self, file_path, mode, klines):
 		'''Creates new or appends to existing csv files for coin objects. Inserts header in the first row
 		   Header row contains: Final row UTC timestamp, number of rows, pointer position at EOF.'''
 
 		with open(file_path, mode, newline='') as csvfile: 
 			final_candle = klines[-1][0]
 			num_rows = len(klines) - 1 # Last row is not added
+			self.previous_update_UTC = int(str(final_candle)[:-3])
 
 			if mode == 'w' or mode == 'r+':			
 				if mode == 'w':
@@ -181,10 +181,9 @@ class Coin():
 		file_paths = self.coin_path + '/' + self.coin_symbol + '*'
 		files = glob(file_paths)
 		if len(files) == 0:
-			print(f'WARNING: database has no coin {self.coin_symbol} stored. Please run get_candles method to obtain its data.')
-			return None
-		file_names = [f.split('/')[-1] for f in files]
-		return file_names # List of csv file names, e.g. INJBTC_4h.csv (list does not include json file).
+			# print(f'WARNING: database has no coin {self.coin_symbol} stored. Please run get_candles method to obtain its data.')
+			return []
+		return [f.split('/')[-1] for f in files] # List of csv file names, e.g. INJBTC_4h.csv (list does not include json file).
 
 
 	def create_json_object(self, *options):
@@ -302,20 +301,22 @@ class Coin():
 
 	def update(self):
 		'''Updates all csv and json files of given file object.'''
+ 
+		# Each coin object will only update their database at most every hour.
+		if self.previous_update_UTC == None or (time() - self.previous_update_UTC >= 3600):
+			csv_files = self.list_saved_files()
+			tradingpairs = set()
+			trim = len(self.coin_symbol)
+			for csvfile in csv_files:
+				tradingpair = csvfile.split('_')[0][trim:]
+				tradingpairs.add(tradingpair)
+			for tradingpair in tradingpairs:
+				self.get_candles(tradingpair)
+			self.update_json()
+			self.add_data_to_json()
+			print(f'All csv and json files of coin {self.coin_symbol} are up to date.')
 
-		csv_files = self.list_saved_files()
-		tradingpairs = set()
-		trim = len(self.coin_symbol)
-		for csvfile in csv_files:
-			tradingpair = csvfile.split('_')[0][trim:]
-			tradingpairs.add(tradingpair)
-		for tradingpair in tradingpairs:
-			self.get_candles(tradingpair)
-		self.update_json()
-		self.add_data_to_json()
-		# print(f'All csv and json files of coin {self.coin_symbol} are up to date.')
-
-	def current_score(self, update=0):
+	def current_score(self, tradingpairs=[], update=0):
 		'''Returns current calculated score.
 		   Candle_max_up means: how well the current price change compares with all the historical maxiumal price changes.'''
 
@@ -323,13 +324,14 @@ class Coin():
 			raise Exception(f'Coin {self.coin_symbol} has no json file.')
 		
 		if update == 1:
-			# or if time == new hour, update every hour 
-			self.update()
+			self.update() # Only updates every hour to be more efficent.
 
 		score_bull = 0
 		score_bear = 0
 		score_dict = {}
 		csv_files = self.list_saved_files()
+		if tradingpairs:
+			csv_files = [csvfile for tradingpair in tradingpairs for csvfile in csv_files if tradingpair in csvfile] # Only look at certain trading pairs. 
 		for csvfile in csv_files:
 			symbol = csvfile.split('_')[0]
 			timeframe = csvfile.split('_')[1].split('.')[0]
@@ -354,6 +356,8 @@ class Coin():
 			coin_data = json.load(jf)
 
 		for symbol in coin_data:
+			if symbol not in score_dict.keys():
+				continue
 			for timeframe in coin_data[symbol]:
 				current_change = score_dict[symbol][timeframe]['candle_change']
 				amplitude_change = score_dict[symbol][timeframe]['candle_amplitude']
