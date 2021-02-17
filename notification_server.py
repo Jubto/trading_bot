@@ -60,7 +60,7 @@ class Notification_server():
 
         coin = Coin(coin_symbol, coin_name) # Create new coin object to monitor. If coin isn't saved locally, new coin will be saved if valid.
 
-        os.chdir(coin.data_path) 
+        os.chdir(coin.coin_path) 
         if len(glob(coin_symbol + '*')) == 0:          
             if tradingpair:
                 if coin.get_candles(tradingpair, *timeframes):

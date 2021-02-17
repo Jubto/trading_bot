@@ -8,10 +8,8 @@ import csv
 import os
 import sys
 
-"""
-https://python-binance.readthedocs.io/en/latest/market_data.html#id7
-"""
 
+#https://python-binance.readthedocs.io/en/latest/market_data.html#id7
 client = Client(API_KEY, API_SECRET) # new client object 
 
 
@@ -24,8 +22,8 @@ class Coin():
 
 	def __init__(self, coin_symbol, coin_name=None):
 		os.chdir(os.path.dirname(os.path.realpath(__file__)))
-		parent_path = os.path.abspath('coindata')
-		coin_path = os.path.join(parent_path, coin_symbol)
+		data_path = os.path.abspath('coindata')
+		coin_path = os.path.join(data_path, coin_symbol)
 		if not os.path.exists(coin_path):
 			os.mkdir(coin_path)
 
@@ -34,8 +32,8 @@ class Coin():
 		
 		self.coin_symbol = coin_symbol
 		self.coin_name = coin_name 
-		self.data_path = coin_path
-		self.json_file = self.data_path + '/' + 'analysis' + '_' +  self.coin_symbol + '.json'
+		self.coin_path = coin_path
+		self.json_file = self.coin_path + '/' + 'analysis' + '_' +  self.coin_symbol + '.json'
 
 	def get_candles(self, tradingpair, *intervals):
 		'''
@@ -89,11 +87,11 @@ class Coin():
 	def remove_tradingpair(self, tradingpair):
 		'''Handles removal of trading pair from given coin'''
 
-		os.chdir(self.data_path)
+		os.chdir(self.coin_path)
 		files = glob(self.coin_symbol + tradingpair + '*')
 		if len(files) > 0:
 			for f in files:
-				os.remove(self.data_path + '/' + f)
+				os.remove(self.coin_path + '/' + f)
 			print(f'All files assoicated with {self.coin_symbol}{tradingpair} have been removed.')
 		else:
 			print(f'{self.coin_symbol} coin has no trading pair {tradingpair} stored in the database.')
@@ -101,13 +99,13 @@ class Coin():
 	def remove_coin(self):
 		'''Handles removing coin'''
 
-		os.chdir(self.data_path)
+		os.chdir(self.coin_path)
 		files = glob('*')
 		for f in files:
-			os.remove(self.data_path + '/' + f)
+			os.remove(self.coin_path + '/' + f)
 		print(f'All assoicated files for {self.coin_symbol} have been removed.')
 		if len(glob('*')) == 0:
-			os.rmdir(self.data_path)
+			os.rmdir(self.coin_path)
 			print(f'All assoicated directories for {self.coin_symbol} have been removed.')
 
 	@staticmethod	
@@ -175,14 +173,14 @@ class Coin():
 
 		symbol = self.coin_symbol.upper() + tradingpair.upper()
 		datafile = symbol + '_' + timeframe
-		return self.data_path + '/' + datafile + '.csv'
+		return self.coin_path + '/' + datafile + '.csv'
 
 	def list_saved_files(self):
 		'''Returns a list of all csv files of coin object. If no csv files are present, raises exception.'''
 
-		os.chdir(self.data_path) # problem is likely here. Make it so you don't have to change directory, rather, just find the path some other way.
+		os.chdir(self.coin_path) # problem is likely here. Make it so you don't have to change directory, rather, just find the path some other way.
 		if len(glob(self.coin_symbol + '*')) == 0:
-			print(f'CURRENT directory is: {self.data_path} and coin {self.coin_symbol}, number of files are: {len(glob(self.coin_symbol + '*'))}')
+			print(f'CURRENT directory is: {self.coin_path} and coin {self.coin_symbol}, number of files are: {len(glob(self.coin_symbol + '*'))}')
 			raise Exception(f'{self.coin_symbol} object has no saved csv data, please run the get_candles method to obtain data.')
 		return glob(self.coin_symbol + '*')
 
@@ -333,7 +331,7 @@ class Coin():
 		for csvfile in csv_files:
 			symbol = csvfile.split('_')[0]
 			timeframe = csvfile.split('_')[1].split('.')[0]
-			csvfile = self.data_path + '/' + csvfile
+			csvfile = self.coin_path + '/' + csvfile
 			with open(csvfile, 'r', newline='') as cf:
 				final_candle = cf.readline().split(':')[0]
 				klines = client.get_historical_klines(symbol, timeframe, int(final_candle))
@@ -455,23 +453,3 @@ class Coin():
 
 	def notify(self):
 		pass
-
-# INJ = Coin('INJ', 'injective')
-# LOKLFKFL = Coin('LOKLFKFL', 'injective')
-# LOKLFKFL.get_candles('BTC')
-# INJ.get_candles('BTC', '6h')
-# INJ.remove_timeframe('BTC', '6h')
-# INJ.remove_tradingpair('BTC')
-# INJ.get_candles('BTC')
-# INJ.update()
-# print(INJ.list_saved_files())
-# print(INJ.data_path)
-# INJ.get_candles('USDT')
-# INJ.get_candles('BTC', '6h3')
-# INJ.update_json()
-# INJ.add_data_to_json()
-# # print(INJ.saved_data())
-# # INJ.create_json_object('print')
-# # INJ.create_json_object()
-# # INJ.create_json_file()
-# INJ.current_score(1)
