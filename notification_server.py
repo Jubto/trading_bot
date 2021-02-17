@@ -35,6 +35,8 @@ class Notification_server():
         self.tickspeed_handler.set()
         self.root_path = os.path.dirname(os.path.realpath(__file__))
         self.data_path = self.root_path + '/coindata'
+		if not os.path.exists(self.data_path):
+			os.mkdir(self.data_path)
 
         if coin_symbols:
             for coin_symbol in coin_symbols:
