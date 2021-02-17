@@ -1,4 +1,0 @@
-The base endpoint is: wss://stream.binance.com:9443
-Raw streams are accessed at /ws/<streamName> (append to endpoint)
-    wss://stream.binance.com:9443/ws/injbtc@trade 
-    wss://stream.binance.com:9443/ws/injbtc@kline_1d

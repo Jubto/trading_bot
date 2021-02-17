@@ -1,4 +1,0 @@
-Write code which retreves and stores all historical candle data (eventually use psql) of a ceratin timeframe/Symbol
-Write code which continually retreves the latest update of those candles every 3 minutes 
-Write code which every 3 minutes calculates a sell or buy score based on the rareity of a given candle
-Write code which notifies the user if a ceratin thresold passes, and also sends a warning about candle closing times
