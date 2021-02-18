@@ -314,7 +314,7 @@ class Coin():
 				self.get_candles(tradingpair)
 			self.update_json()
 			self.add_data_to_json()
-			print(f'All csv and json files of coin {self.coin_symbol} are up to date.')
+			# print(f'All csv and json files of coin {self.coin_symbol} are up to date.')
 
 	def current_score(self, tradingpairs=[], update=0):
 		'''Returns current calculated score.

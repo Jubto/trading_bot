@@ -1,6 +1,7 @@
 from threading import Thread, Event, enumerate as list_threads
 from get_candles import Coin 
 from glob import glob
+import re
 import sys
 import os
 import socket
@@ -88,6 +89,7 @@ class Notification_server():
                 return 0 # Close thread. 
         
         files = coin.list_saved_files() # Files may have had additional csv added to it. 
+        print(f'files are: {files}')
         self.SERVER_INSTRUCTION['added_coin'] = 1 # Notify that a coin, tradingpair or timeframe has been added.
         if coin_symbol not in self.MONITORED_COINS.keys():
             self.MONITORED_COINS[coin_symbol] = []
@@ -101,7 +103,13 @@ class Notification_server():
                     self.MONITORED_COINS[coin_symbol].append(c) # Append only tradingpair/timeframe which server is actively monitoring. 
                     if symbol not in self.MONITORED_COINS[coin_symbol + '_tradingpairs']:
                         self.MONITORED_COINS[coin_symbol + '_tradingpairs'].append(symbol) # Append tradingpair server is actively monitoring. 
+            else:
+                # This means add all tradingpairs/timeframes for server to monitor
+                self.MONITORED_COINS[coin_symbol].append(c)
+                if symbol not in self.MONITORED_COINS[coin_symbol + '_tradingpairs']:
+                    self.MONITORED_COINS[coin_symbol + '_tradingpairs'].append(symbol)
 
+        print(f'TEST@@@@ coin {coin_symbol} has {self.MONITORED_COINS[coin_symbol]}')
         # Thread core, checks for request_interval time every server tick.
         while True:
             self.tickspeed_handler.wait() # Releases every server tick
@@ -269,49 +277,67 @@ class Notification_server():
                 print(pair)
     
     def monitor_new(self):
-        '''Handles user input for specifying a new coin, trading pair or timeframe to monitor by the server'''
+        '''Handles user input for specifying multiple new coins, trading pairs or timeframes to monitor by the server'''
 
         self.SERVER_INSTRUCTION['pause'] = 1 # Stops all server stdout for cleaner user interaction.
+        print('\nEnter coins to monitor, OPTIONALLY choose their respective tradingpairs/timeframes (Seperate multiple entries by spaces):')
+        input_coin_dict = {}
+        deafult_timeframes = ['1w', '3d', '1d', '4h', '1h']
         while True:
-            coin_symbol = str(input('Please input coin symbol to monitor: ')).upper()
-            if len(coin_symbol) == 0:
+            coin_symbols = str(input('Input coins: ')).upper()
+            if len(coin_symbols) == 0:
+                continue
+            if re.search('[,.|]', coin_symbols):
+                print(f'Please seperate multiple coin entries using whitespaces.')
                 continue
             break
-        while True:
-            tradingpairs = str(input('Please input trading pair(s) - seperated by spaces: ')).upper()
-            if len(tradingpairs) == 0:
-                continue     
-            break
-        tradingpairs = tradingpairs.split(' ')
-        coin_name = str(input('OPTIONAL: input coin name: '))
+        for coin in coin_symbols.split(' '):
+            if coin == '':
+                continue
+            input_coin_dict[coin] = {} # Dictionary for tradingpairs.
 
-        monitored_timeframes = {}
-        for tradingpair in tradingpairs:
-            if tradingpair == '':
-                continue
-            symbol = coin_symbol + tradingpair
-            monitored_timeframes[tradingpair] = [] 
-            deafult_timeframes = ['1w', '3d', '1d', '4h', '1h']
-            for coin in self.MONITORED_COINS:
-                for pair in self.MONITORED_COINS[coin]:
-                    if symbol == pair.split('_')[0]:
-                        monitored_timeframes[tradingpair].append(pair.split('_')[1])
-                if len(monitored_timeframes[tradingpair]) > 0:
+        for coin in input_coin_dict:
+            while True:
+                tradingpairs = str(input(f'Input {coin} trading pairs: ')).upper() 
+                if re.search('[,.|]', tradingpairs):
+                    print(f'Please seperate multiple tradingpair entries using whitespaces.')
+                    continue
+                break
+            tradingpairs = tradingpairs.split(' ')
+            for tradingpair in tradingpairs:
+                if tradingpair == '':
+                    continue
+                input_coin_dict[coin][tradingpair] = [] # List for timeframes of each tradingpair.
+            for tradingpair in input_coin_dict[coin]:
+                symbol = coin + tradingpair
+                try:
+                    print(f'{coin} has: {self.MONITORED_COINS[coin]}')
+                    for monitored_tradingpair in self.MONITORED_COINS[coin]:
+                        if symbol == monitored_tradingpair.split('_')[0]:
+                            input_coin_dict[coin][tradingpair].append(monitored_tradingpair.split('_')[1]) # Add all monitored timeframes for a given tradingpair.
+                except KeyError:
+                    pass # Means server is not monitoring coin.
+
+                if len(input_coin_dict[coin][tradingpair]) > 0:
+                    # This means coin is currently being monitored by server. User can add aditional trading pairs or timeframes.
+                    print(f'Server currently monitoring {coin + tradingpair} with timeframes: {input_coin_dict[coin][tradingpair]}')
+                else:
+                    # This means coin entered is currently not being monitored by server (although it could be in the database). 
+                    print(f'Server will start monitoring {coin + tradingpair} with deafult timeframes: {deafult_timeframes}') #TODO Actually need to search database to find true values
+
+                while True:
+                    timeframes = input('OPTIONAL: Input additional timeframes: ')
+                    if re.search('[,.|]', coin):
+                        print(f'Please seperate multiple coin entries using whitespaces.')
+                        continue
+                    input_coin_dict[coin][tradingpair] = timeframes.split(' ') # Include only new timeframes to add. 
                     break
-        for tradingpair in monitored_timeframes:
-            if len(monitored_timeframes[tradingpair]) > 0:
-                # This means coin is currently being monitored by server. User can add aditional trading pairs or timeframes.
-                print(f'Server is currently monitoring {coin_symbol + tradingpair} with the following timeframes: {monitored_timeframes[tradingpair]}')
-                timeframes = input('OPTIONAL: input additional timeframes (seperated by spaces): ')
-            else:
-                # This means coin entered is currently not being monitored by server (although it could be in the database). 
-                print(f'Server will monitor {coin_symbol + tradingpair} with the following timeframes: {deafult_timeframes}')
-                timeframes = input('OPTIONAL: input additional timeframes (seperated by spaces): ')
-            monitored_timeframes[tradingpair].append(timeframes.split(' '))
-        self.SERVER_INSTRUCTION['pause'] = 0 
-        for tradingpair in monitored_timeframes:
-            self.add_new_coin(coin_symbol, tradingpair, coin_name, monitored_timeframes[tradingpair][-1])
         
+        self.SERVER_INSTRUCTION['pause'] = 0 
+        for coin in input_coin_dict:
+            for tradingpair in input_coin_dict[coin]:
+                self.add_new_coin(coin_symbol=coin, tradingpair=tradingpair, timeframes=input_coin_dict[coin][tradingpair])
+
 
     def add_new_coin(self, coin_symbol, tradingpair=None, coin_name=None, timeframes=[]):
         '''Handles adding a new coin, trading pair, or timeframe to monitor by server'''
@@ -353,7 +379,27 @@ class Notification_server():
     
     def drop_coin(self):
         '''Handles dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested'''
-        pass
+
+        self.SERVER_INSTRUCTION['pause'] = 1 # Stops all server stdout for cleaner user interaction.
+        print('\nEnter a coin, coin/tradingpair, or coin/tradingpair/timeframe to drop via the interface:')
+        while True:
+            coin_symbol = str(input('Please input coin symbol: ')).upper()
+            if len(coin_symbol) == 0:
+                continue
+            if re.search('[,.|]', coin_symbol):
+                print(f'Please seperate multiple coin entries using whitespaces.')
+                continue
+            break
+        while True:
+            tradingpairs = str(input('Please input trading pair(s) - seperated by spaces: ')).upper()
+            if len(tradingpairs) == 0:
+                continue     
+            break
+        # Ask user to input coin symbol, optional tradingpair, optional timeframe
+        # check against files - if not there then end, else:
+        # ASk whether they want to stop monitoring or delete the database
+        # check whether server is currently monitoring that item
+        # 
         #TODO
 
     def server_listen(self):
@@ -388,15 +434,11 @@ class Notification_server():
 # Optional coin_symbols can be added, example: <python3 notification_server.py BTC LTC ETH INJ>
 # Once the server is running, to view commands enter <commands> 
 user_start_arguments = sys.argv
-if len(user_start_arguments) > 0:
-    if len(user_start_arguments) == 1:
-        server = Notification_server()
-    elif len(user_start_arguments) > 1:
-        coins = user_start_arguments[1:]
-        server = Notification_server(coin_symbols=coins)
-    server.server_shutdown.wait() # Pauses main thread until shutdown_server method is invoked.
-else:
-    print("Invalid entry, please run server with following format: 'python3 notification_server.py coin_symbol coin_name 5' (final argument optional)")
-
+if len(user_start_arguments) == 1:
+    server = Notification_server()
+elif len(user_start_arguments) > 1:
+    coins = user_start_arguments[1:]
+    server = Notification_server(coin_symbols=coins)
+server.server_shutdown.wait() # Pauses main thread until shutdown_server method is invoked.
 print("Server shut down.")
 # Main thread ends here. 
