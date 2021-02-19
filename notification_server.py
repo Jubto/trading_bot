@@ -376,10 +376,10 @@ class Notification_server():
         coins = glob(self.data_path) 
         if len(coins) == 0:
             self.monitor_new()
-            return 0
-        for coin in coins:
-            coin = coin.split('/')[-1]
-            self.add_new_coin(coin)
+        else:
+            for coin in coins:
+                coin = coin.split('/')[-1]
+                self.add_new_coin(coin)
     
     def drop_coin(self):
         '''Handles dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested'''
