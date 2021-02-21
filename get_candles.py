@@ -58,12 +58,14 @@ class Coin():
 			symbol = self.coin_symbol.upper() + tradingpair.upper()
 			try:
 				if os.path.exists(datafile):
-					with open(datafile, 'r', newline='') as csvfile: # csvfile represents a file object
+					with open(datafile, 'r', newline='') as csvfile: 
 						final_candle = csvfile.readline().split(':')[0] # Read first line of csv to obtain most recent UTC candle time saved 
-						klines = client.get_historical_klines(symbol, timeframe, int(final_candle)) # Retreve only new candles 
-						# print(f'Timeframe: {timeframe} final_candle {final_candle} klines {len(klines)}')
-						self.csv_maker(datafile, 'a', klines)
-						self.csv_maker(datafile, 'r+', klines) # Update the latest UTC candle to the first line of .csv
+					klines = client.get_historical_klines(symbol, timeframe, int(final_candle)) # Retreve only new candles from Binance 
+					self.csv_maker(datafile, 'a', klines) # Append only new candles
+					self.csv_maker(datafile, 'r+', klines) # Update the latest UTC candle to the first line of .csv
+					if timeframe == '1h':
+						with open(datafile, 'r', newline='') as csvfile:
+							self.previous_update_UTC = csvfile.readline().split(':')[0] # Keeps track of the latest hour coin was updated.
 				else:
 					klines = client.get_historical_klines(symbol, timeframe, self.EARLIEST_DATE) # Get all candlestick data from earliest possible date from binance.
 					self.csv_maker(datafile, 'w', klines)
@@ -114,8 +116,6 @@ class Coin():
 		with open(file_path, mode, newline='') as csvfile: 
 			final_candle = klines[-1][0]
 			num_rows = len(klines) - 1 # Last row is not added
-			self.previous_update_UTC = int(str(final_candle)[:-3]) # TODO - we need to get only the 1 hour last timeframe specifically 
-
 			if mode == 'w' or mode == 'r+':			
 				if mode == 'w':
 					# If block only activates when creating csv file for first time.
@@ -315,15 +315,14 @@ class Coin():
 			self.add_data_to_json()
 			# print(f'All csv and json files of coin {self.coin_symbol} are up to date.')
 
-	def current_score(self, tradingpairs=[], update=0):
+	def current_score(self, tradingpairs=[]):
 		'''Returns current calculated score.
 		   Candle_max_up means: how well the current price change compares with all the historical maxiumal price changes.'''
 
 		if not os.path.exists(self.json_file):
 			raise Exception(f'Coin {self.coin_symbol} has no json file.')
 		
-		if update == 1:
-			self.update() # Only updates every hour to be more efficent.
+		self.update() # Only updates every hour to be more efficent.
 
 		score_bull = 0
 		score_bear = 0

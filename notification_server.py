@@ -54,18 +54,68 @@ class Notification_server():
         Thread(target=self.server_user_stdinput, daemon=True).start() # Ready server to intake user inputs
         Thread(target=self.server_listen, daemon=True).start() # Ready server to receive HTTP requests from client (i.e. trading_bot webpage)
 
-
     def server_start(self):
         '''Let's user know server has successfully been initiated.'''
+
         print(f'Sever has been initiated!')
         print(f'Server is ready to intake commands. Type "commands" to view avaliable commands:\n')
 
+    def server_commands(self):
+        '''Prints description of each server command.'''
+
+        print(f'\nList of commands:')
+        print('='*130)
+        print(f'<commands>: Returns list of commands with description.')
+        print(f'<monitor>: Allows user to add new multiple new coins, tradingpairs and timeframes to monitor.')
+        print(f'<all>: Server will start monitoring all coins, tradingpairs and timeframes stored in the local database.')
+        print(f'<drop>: Allows user to drop specific coins, tradingpairs and timeframes from monitoring or database.')
+        print(f'<monitoring>: Server returns all coins it is currently monitoring.')
+        print(f'<request_interval>: Allows user to modify server communication interval with Binance for candle retreival (deafult 1 minute).')
+        print(f'<stdout>: Toggles server stdout.')
+        print(f'<server_speed>: Allows user to modify server tick speed.')
+        print(f'<notify>: Allows user to modify the bull/bear score threshold required for server to notify user.')
+        print(f'<quit>: Shuts down server activity.')
+        print('='*130 + '\n')
+
+    def server_user_stdinput(self):
+        '''Handles user inputs.'''
+
+        while True:
+            user_input = input() # Pauses thread until user input.
+            if user_input in self.SERVER_COMMANDS:
+                if user_input == 'commands':
+                    self.server_commands()
+                elif user_input == 'quit':
+                    self.shutdown_server()
+                elif user_input == 'stdout':
+                    self.toggle_stdout()
+                elif user_input == 'request_interval':
+                    self.update_timers('request_interval')
+                elif user_input == 'server_speed':
+                    self.update_timers('server_speed')
+                elif user_input == 'monitoring':
+                    self.current_monitoring()
+                elif user_input == 'monitor':
+                    self.input_monitor_new()
+                elif user_input == 'all':
+                    self.monitor_all_saved_coins()
+                elif user_input == 'drop':
+                    self.input_drop_coin()
+                elif user_input == 'notify':
+                    self.notification_settings()
+                elif user_input == 'debug':
+                    print(f'Server instruction settings are:\n{self.SERVER_INSTRUCTION}')
+            else:
+                print(f'{user_input} is an invalid server command.')
+                print(f'Enter "commands" to view all avaliable commands.')
+
     def monitor_coin(self, coin_symbol, tradingpair=None, coin_name=None, timeframes=[]):
-        '''This method starts the monitoring thread of given coin. This thread allows the server to monitor multiple coins at once.'''
+        '''This thread starts the monitoring of given coin. Handles external signals to drop activity.'''
 
         coin = Coin(coin_symbol, coin_name) # Create new coin object to monitor. If coin isn't saved locally, new coin will be saved if valid.
         files = coin.list_saved_files()
 
+        # Update coin / coin-tradingpair if it exists in local storage, create new, or determine it doesn't exist on Binance:
         if len(files) == 0:     
             if tradingpair:
                 if coin.get_candles(tradingpair, *timeframes):
@@ -86,13 +136,14 @@ class Notification_server():
             else:
                 print(f'{coin_symbol}{tradingpair} is not avaliable on Binance.3')
                 return 0 # Close thread. 
-        
-        files = coin.list_saved_files() # Files may have had additional csv added to it. 
-        self.SERVER_INSTRUCTION['added_coin'] = 1 # Notify that a coin, tradingpair or timeframe has been added.
+        self.SERVER_INSTRUCTION['added_coin'] = 1 # Notify that a coin/tradingpair/timeframe has been added to other threads.
+        print(f'Server will start monitoring {coin_symbol}{tradingpair}.\n') if tradingpair else print(f'Server will start monitoring {coin_symbol}.\n')
+
+        # Add coin to monitoring list:
         if coin_symbol not in self.MONITORED_COINS.keys():
             self.MONITORED_COINS[coin_symbol] = []
             self.MONITORED_COINS[coin_symbol + '_tradingpairs'] = []
-        print(f'Server will start monitoring {coin_symbol}{tradingpair}.\n') if tradingpair else print(f'Server will start monitoring {coin_symbol}.\n')
+        files = coin.list_saved_files() # New coin csv files may have been added. 
         for c in files:
             c = c.split('.')[0]
             symbol = c.split('_')[0]
@@ -109,8 +160,9 @@ class Notification_server():
 
         # Thread core, checks for drop requests and request_interval time every server tick.
         while True:
-            self.tickspeed_handler.wait() # Releases every server tick
+            self.tickspeed_handler.wait() # Releases every server tick.
 
+            # Check to see whether any drop requests are active.
             if self.SERVER_INSTRUCTION['drop_coin']:
                 coin_to_drop = self.SERVER_INSTRUCTION['drop_coin'] # coin specified to drop
                 self.SERVER_INSTRUCTION['drop_coin'] = 0
@@ -140,18 +192,46 @@ class Notification_server():
                     if pair == timeframe_to_drop:
                         self.MONITORED_COINS[coin_symbol].remove(timeframe_to_drop)
 
+            # Check to see whether request timer has activated.
             time.sleep(self.SERVER_SPEED / 10) # Allow time for request_interval_handler to update value of SERVER_INSTRUCTION. 
             if self.SERVER_INSTRUCTION['request_interval']:
-                tradingpairs = self.MONITORED_COINS[coin_symbol + '_tradingpairs']
-                coin_score = coin.current_score(tradingpairs=tradingpairs, update=1) # Updates database of given coin with latest candles and anaylsis.
+                tradingpairs = self.MONITORED_COINS[coin_symbol + '_tradingpairs'] # Only monitor specified tradingpairs.
+                coin_score = coin.current_score(tradingpairs=tradingpairs) # Retreve coin score and analysis summary. 
                 self.server_push(coin_score) # Sends data to webpage.
                 if self.SERVER_INSTRUCTION['stdout']:
-                    self.MESSAGE_BACKLOG.append(coin_score)
+                    self.MESSAGE_BACKLOG.append(coin_score) # Send data to stdout method. 
 
-    def monitored_coins(self):
-        print(f'Server is currently monitoring:\n\t\t\t')
+    def current_monitoring(self):
+        '''Returns list of coins, trading pairs and timeframes server is currently monitoring.'''
+
+        print(f'\nServer is currently monitoring:')
         for coin in self.MONITORED_COINS:
-            print(coin, self.MONITORED_COINS[coin])  
+            print(f'\ncoin {coin}:')
+            for pair in self.MONITORED_COINS[coin]:
+                print(pair)
+
+    def current_monitoring_list(self):
+        '''Returns list of all pairs monitored and stored in the database'''
+
+        currently_monitoring = [tradingpair for coin in self.MONITORED_COINS 
+                                for tradingpair in self.MONITORED_COINS[coin] if coin.split('_')[-1] != 'tradingpairs']
+        
+        stored_tradingpairs = [tradingpair.split('/')[-1][:-4] for coin in glob(self.data_path + '/*') 
+                                for tradingpair in glob(self.data_path + '/' + coin.split('/')[-1] + '/*') if tradingpair.split('.')[-1] != 'json']
+
+        return currently_monitoring, stored_tradingpairs
+
+
+    def monitor_all_saved_coins(self):
+        '''When invoked, server will start monitoring all coins saved locally'''
+
+        coins = glob(self.data_path + '/*') 
+        if len(coins) == 0:
+            self.input_monitor_new()
+        else:
+            for coin in coins:
+                coin = coin.split('/')[-1]
+                self.add_new_coin(coin)
 
 
     def request_interval_handler(self):
@@ -201,54 +281,6 @@ class Notification_server():
                     print(f'Bear score: {message[2]} out of 60')
                     print('='*130 + '\n\n')
 
-    def server_user_stdinput(self):
-        '''Handles user inputs.'''
-
-        while True:
-            user_input = input() # Pauses thread until user input.
-            if user_input in self.SERVER_COMMANDS:
-                if user_input == 'commands':
-                    self.server_commands()
-                elif user_input == 'quit':
-                    self.shutdown_server()
-                elif user_input == 'stdout':
-                    self.toggle_stdout()
-                elif user_input == 'request_interval':
-                    self.update_timers('request_interval')
-                elif user_input == 'server_speed':
-                    self.update_timers('server_speed')
-                elif user_input == 'monitoring':
-                    self.current_monitoring()
-                elif user_input == 'monitor':
-                    self.input_monitor_new()
-                elif user_input == 'all':
-                    self.monitor_all_saved_coins()
-                elif user_input == 'drop':
-                    self.input_drop_coin()
-                elif user_input == 'notify':
-                    self.notification_settings()
-                elif user_input == 'debug':
-                    print(f'Server instruction settings are:\n{self.SERVER_INSTRUCTION}')
-            else:
-                print(f'{user_input} is an invalid server command.')
-                print(f'Enter "commands" to view all avaliable commands.')
-
-    def server_commands(self):
-        '''Prints description of each server command.'''
-
-        print(f'\nList of commands:')
-        print('='*130)
-        print(f'<commands>: Returns list of commands with description.')
-        print(f'<monitor>: Allows user to add new multiple new coins, tradingpairs and timeframes to monitor.')
-        print(f'<all>: Server will start monitoring all coins, tradingpairs and timeframes stored in the local database.')
-        print(f'<drop>: Allows user to drop specific coins, tradingpairs and timeframes from monitoring or database.')
-        print(f'<monitoring>: Server returns all coins it is currently monitoring.')
-        print(f'<request_interval>: Allows user to modify server communication interval with Binance for candle retreival (deafult 1 minute).')
-        print(f'<stdout>: Toggles server stdout.')
-        print(f'<server_speed>: Allows user to modify server tick speed.')
-        print(f'<notify>: Allows user to modify the bull/bear score threshold required for server to notify user.')
-        print(f'<quit>: Shuts down server activity.')
-        print('='*130 + '\n')
 
     def toggle_stdout(self):
         '''Toggles server stdout'''
@@ -296,25 +328,6 @@ class Notification_server():
             time.sleep(boost)
         self.SERVER_SPEED = original_SERVER_SPEED
 
-    def current_monitoring(self):
-        '''Returns list of coins, trading pairs and timeframes server is currently monitoring.'''
-
-        print(f'\nServer is currently monitoring:')
-        for coin in self.MONITORED_COINS:
-            print(f'\ncoin {coin}:')
-            for pair in self.MONITORED_COINS[coin]:
-                print(pair)
-
-    def current_monitoring_list(self):
-        '''Returns list of all pairs monitored and stored in the database'''
-
-        currently_monitoring = [tradingpair for coin in self.MONITORED_COINS 
-                                for tradingpair in self.MONITORED_COINS[coin] if coin.split('_')[-1] != 'tradingpairs']
-        
-        stored_tradingpairs = [tradingpair.split('/')[-1][:-4] for coin in glob(self.data_path + '/*') 
-                                for tradingpair in glob(self.data_path + '/' + coin.split('/')[-1] + '/*') if tradingpair.split('.')[-1] != 'json']
-
-        return currently_monitoring, stored_tradingpairs
     
     def input_monitor_new(self):
         '''Handles user input for specifying multiple new coins, trading pairs or timeframes to monitor by the server'''
@@ -370,7 +383,7 @@ class Notification_server():
                     input_coin_dict[coin][tradingpair] = timeframes.split(' ') # Include only new timeframes to add. 
                     break
         
-        self.SERVER_INSTRUCTION['pause'] = 0 
+        self.SERVER_INSTRUCTION['pause'] = 0 # Unpause server stdout.
         for coin in input_coin_dict:
             for tradingpair in input_coin_dict[coin]:
                 self.add_new_coin(coin_symbol=coin, tradingpair=tradingpair, timeframes=input_coin_dict[coin][tradingpair])
@@ -403,16 +416,7 @@ class Notification_server():
             Thread(target=self.monitor_coin, name=coin_symbol, args=(coin_symbol, tradingpair, coin_name, timeframes), daemon=True).start()
         self.SERVER_INSTRUCTION['boost'] = 0 # Turn off boost thread.
 
-    def monitor_all_saved_coins(self):
-        '''When invoked, server will start monitoring all coins saved locally'''
 
-        coins = glob(self.data_path + '/*') 
-        if len(coins) == 0:
-            self.input_monitor_new()
-        else:
-            for coin in coins:
-                coin = coin.split('/')[-1]
-                self.add_new_coin(coin)
     
     def input_drop_coin(self):
         '''Handles dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested'''
@@ -469,6 +473,7 @@ class Notification_server():
                             continue
                         self.drop_coin(coin + '_' + pair + '_@' + timeframe) # The highest degree of user input specificity. 
                     break
+        self.SERVER_INSTRUCTION['pause'] = 0 # Unpause server stdout.
 
     def drop_coin(self, item):
         '''Handles removing given coin/tradingpair/timeframe from Server monitoring or database'''
@@ -521,15 +526,16 @@ class Notification_server():
         print('Server is shutting down...')
         self.server_shutdown.set() # Set event object flag as ON.
 
-# Server can be started with <python3 notification_server.py>
-# Optional coin_symbols can be added, example: <python3 notification_server.py BTC LTC ETH INJ>
-# Once the server is running, to view commands enter <commands> 
-user_start_arguments = sys.argv
-if len(user_start_arguments) == 1:
-    server = Notification_server()
-elif len(user_start_arguments) > 1:
-    coins = user_start_arguments[1:]
-    server = Notification_server(coin_symbols=coins)
-server.server_shutdown.wait() # Pauses main thread until shutdown_server method is invoked.
-print("Server shut down.")
+if __name__ == '__main__':
+    # Server can be started with <python3 notification_server.py>
+    # Optional coin_symbols can be added, example: <python3 notification_server.py BTC LTC ETH INJ>
+    # Once the server is running, to view commands enter <commands> 
+    user_start_arguments = sys.argv
+    if len(user_start_arguments) == 1:
+        server = Notification_server()
+    elif len(user_start_arguments) > 1:
+        coins = user_start_arguments[1:]
+        server = Notification_server(coin_symbols=coins)
+    server.server_shutdown.wait() # Pauses main thread until shutdown_server method is invoked.
+    print("Server shut down.")
 # Main thread ends here. 
