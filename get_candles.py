@@ -78,25 +78,24 @@ class Coin():
 		self.create_json_file()
 		return 1
 
-	def remove_timeframe(self, tradingpair, timeframe):
+	def remove_timeframe(self, symbol_timeframe):
 		'''Handles removal of timeframe for given coin'''
 
-		datafile = self.csv_filename(tradingpair, timeframe)
+		datafile = self.coin_path + '/' + symbol_timeframe + '.csv'
 		if os.path.exists(datafile):
 			os.remove(datafile)
-			print(f'{self.coin_symbol}{tradingpair} timeframe {timeframe} has been removed.')
+			print(f'{symbol_timeframe} has been removed.')
 		else:
-			print(f'{self.coin_symbol}{tradingpair} does not have the timeframe {timeframe}')
+			print(f'{symbol_timeframe} is already not present in database.')
 
-	def remove_tradingpair(self, tradingpair):
+	def remove_tradingpair(self, symbol):
 		'''Handles removal of trading pair from given coin'''
 
 		files = self.list_saved_files()
-		trim = len(self.coin_symbol)
 		for f in files:
-			if tradingpair == f.split('_')[0][trim:]:
+			if symbol == f.split('_')[0]:
 				os.remove(self.coin_path + '/' + f)
-		print(f'All files assoicated with {self.coin_symbol}{tradingpair} have been removed.')
+		print(f'All files assoicated with {symbol} have been removed.')
 
 	def remove_coin(self):
 		'''Handles removing coin'''
@@ -115,7 +114,7 @@ class Coin():
 		with open(file_path, mode, newline='') as csvfile: 
 			final_candle = klines[-1][0]
 			num_rows = len(klines) - 1 # Last row is not added
-			self.previous_update_UTC = int(str(final_candle)[:-3])
+			self.previous_update_UTC = int(str(final_candle)[:-3]) # TODO - we need to get only the 1 hour last timeframe specifically 
 
 			if mode == 'w' or mode == 'r+':			
 				if mode == 'w':
