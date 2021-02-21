@@ -462,7 +462,9 @@ class Notification_server():
                     timeframes = input(f'Input {coin + tradingpair} timeframes: ')
                     if re_search(timeframes):
                         continue
-                    for timeframe in timeframes.split(' '):
+                    if not re.search('[^ ]', timeframes):
+                        self.drop_coin(coin + '_' + tradingpair) # This means the user just entered a white space.
+                    for timeframe in timeframes:
                         if timeframe == '':
                             continue
                         self.drop_coin(coin + '_' + pair + '_@' + timeframe) # The highest degree of user input specificity. 
@@ -473,7 +475,7 @@ class Notification_server():
 
         Thread(target=self.boost_speed, args=(0.5,), daemon=True).start() # Temporarily increase speed for relavent coin Thread to process delete SERVER_INSTRUCTION. 
 
-        item = item.split('_')
+        item = item.replace('-drop', '')
         if len(item) == 1:
             self.SERVER_INSTRUCTION['drop_coin'] = item
         elif len(item) == 2:
@@ -483,7 +485,7 @@ class Notification_server():
 
         self.SERVER_INSTRUCTION['boost'] = 0 # Turn off boost thread.
 
-
+ 
     @staticmethod
     def re_search(string):
         '''Performs search for invalid symbols'''
