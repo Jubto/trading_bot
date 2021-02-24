@@ -65,7 +65,7 @@ class Coin():
 					self.csv_maker(datafile, 'r+', klines) # Update the latest UTC candle to the first line of .csv
 					if timeframe == '1h':
 						with open(datafile, 'r', newline='') as csvfile:
-							self.previous_update_UTC = csvfile.readline().split(':')[0] # Keeps track of the latest hour coin was updated.
+							self.previous_update_UTC = int(csvfile.readline().split(':')[0]) # Keeps track of the latest hour coin was updated.
 				else:
 					klines = client.get_historical_klines(symbol, timeframe, self.EARLIEST_DATE) # Get all candlestick data from earliest possible date from binance.
 					self.csv_maker(datafile, 'w', klines)
@@ -82,6 +82,7 @@ class Coin():
 
 	def remove_timeframe(self, symbol_timeframe):
 		'''Handles removal of timeframe for given coin'''
+		# TODO also update the json file 
 
 		datafile = self.coin_path + '/' + symbol_timeframe + '.csv'
 		if os.path.exists(datafile):
@@ -92,6 +93,7 @@ class Coin():
 
 	def remove_tradingpair(self, symbol):
 		'''Handles removal of trading pair from given coin'''
+		# TODO also update the json file 
 
 		files = self.list_saved_files()
 		for f in files:
@@ -101,6 +103,7 @@ class Coin():
 
 	def remove_coin(self):
 		'''Handles removing coin'''
+		# TODO also update the json file 
 
 		files = self.list_saved_files()
 		for f in files:
@@ -450,7 +453,29 @@ class Coin():
 		
 
 	def historical_score(self):
+		#TODO: This will be a fairly complex method. 
+		#Tasks: obtain 5min candle data to store ONLY as csv. Use each 5min row data as input into the historical_score method. Each row acts like real time measurments back in time.
+		# These real time measurments will be used to create what the relative bull/bear score was back then. The goal is to use all these data points to create a graph 
+		# This graph can be shown on the github readme to clearly show the program working and the product of the program
+		# Additional metrixs of the graph will be: The % amp and % change PER 5 min, per timeframe (1h, 1d, 3d etc), so a lot of data.
+		# The goal would be to be able to toggle on and off some of the lines, and try to find places where the score peaks, with %amp/%change peaking at ALH, then
+		# also adding the price action to see whether you can deduce some clear moments to sell
+		# in fact, using the historical price action, you can then determine customised bull/bear scores for a given coin
+		# note: running this would take ages, so it should only be run once, then stored as a file with all the data. 
+		# possibly add volumn data to this.
+
+		# in terms of how: So image we have out dataset. We create a new json file which will dynamically grow, Starting from the beginning, each timeframe the passes, you update
+		# the json file with the resulting % changes, but every 5 min you use this new small json file to run a current_score like method to get the bull/bear score and store that
+		# in new csv - so a csv with all 5min from beginning and their relative scores + also append to each row (5min) the %change and %amp for each timeframe
+		# so the new json will NOT contain 5min tf, but will contain 1h etc. and grow from size 0 up to the latest version, but each time it grows you do all these things.  
+
+		# later on, I want to see if I can add other exchanges which have older data, maybe like bitrex
 		pass
+
+	def graph_historical_data(self):
+		# Take notes from project-falcon
+		# Perhaps make a class dedicated to graphing
+		pass 
 
 	def sell_assest(self):
 		'''Use only during emergency, sells asset on binance'''

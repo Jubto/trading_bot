@@ -67,12 +67,12 @@ class Notification_server():
         print('='*130)
         print(f'<commands>: Returns list of commands with description.')
         print(f'<monitor>: Allows user to add new multiple new coins, tradingpairs and timeframes to monitor.')
-        print(f'<all>: Server will start monitoring all coins, tradingpairs and timeframes stored in the local database.')
-        print(f'<drop>: Allows user to drop specific coins, tradingpairs and timeframes from monitoring or database.')
         print(f'<monitoring>: Server returns all coins it is currently monitoring.')
-        print(f'<request_interval>: Allows user to modify server communication interval with Binance for candle retreival (deafult 1 minute).')
+        print(f'<all>: Server will start monitoring all coins, tradingpairs and timeframes stored in the local database.')
+        print(f'<drop>: Allows user to drop specific coins, tradingpairs and timeframes from monitoring or database.')            
         print(f'<stdout>: Toggles server stdout.')
         print(f'<server_speed>: Allows user to modify server tick speed.')
+        print(f'<request_interval>: Allows user to modify server communication interval with Binance for candle retreival (deafult 1 minute).')
         print(f'<notify>: Allows user to modify the bull/bear score threshold required for server to notify user.')
         print(f'<quit>: Shuts down server activity.')
         print('='*130 + '\n')
@@ -144,17 +144,17 @@ class Notification_server():
             self.MONITORED_COINS[coin_symbol] = []
             self.MONITORED_COINS[coin_symbol + '_tradingpairs'] = []
         files = coin.list_saved_files() # New coin csv files may have been added. 
-        for c in files:
-            c = c.split('.')[0]
-            symbol = c.split('_')[0]
+        for csvfile in files:
+            csvfile = csvfile.split('.')[0]
+            symbol = csvfile.split('_')[0]
             if tradingpair:
                 if symbol == coin.coin_symbol + tradingpair:
-                    self.MONITORED_COINS[coin_symbol].append(c) # Append only tradingpair/timeframe which server is actively monitoring. 
+                    self.MONITORED_COINS[coin_symbol].append(csvfile) # Append only tradingpair/timeframe which server is actively monitoring. 
                     if symbol not in self.MONITORED_COINS[coin_symbol + '_tradingpairs']:
                         self.MONITORED_COINS[coin_symbol + '_tradingpairs'].append(symbol) # Append tradingpair server is actively monitoring. 
             else:
                 # This means add all tradingpairs/timeframes for server to monitor
-                self.MONITORED_COINS[coin_symbol].append(c)
+                self.MONITORED_COINS[coin_symbol].append(csvfile)
                 if symbol not in self.MONITORED_COINS[coin_symbol + '_tradingpairs']:
                     self.MONITORED_COINS[coin_symbol + '_tradingpairs'].append(symbol)
 
@@ -340,7 +340,7 @@ class Notification_server():
             coin_symbols = str(input('Input coins: ')).upper()
             if len(coin_symbols) == 0:
                 continue
-            if re_search(coin_symbols):
+            if self.re_search(coin_symbols):
                 continue
             break
         for coin in coin_symbols.split(' '):
@@ -351,7 +351,7 @@ class Notification_server():
         for coin in input_coin_dict:
             while True:
                 tradingpairs = str(input(f'Input {coin} trading pairs: ')).upper() 
-                if re_search(tradingpairs):
+                if self.re_search(tradingpairs):
                     continue
                 break
             tradingpairs = tradingpairs.split(' ')
@@ -378,7 +378,7 @@ class Notification_server():
 
                 while True:
                     timeframes = input('OPTIONAL: Input additional timeframes: ')
-                    if re_search(timeframes):
+                    if self.re_search(timeframes):
                         continue
                     input_coin_dict[coin][tradingpair] = timeframes.split(' ') # Include only new timeframes to add. 
                     break
@@ -419,23 +419,25 @@ class Notification_server():
 
     
     def input_drop_coin(self):
-        '''Handles dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested'''
+        '''Handles user input for dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested'''
 
         currently_monitoring, stored_tradingpairs = self.current_monitoring_list()
+        input_coin_dict = {}
         
         self.SERVER_INSTRUCTION['pause'] = 1 # Stops all server stdout for cleaner user interaction.
         print(f'Server is currently monitoring:\n{currently_monitoring}\n')
         print(f'Server has the following pairs in the database:\n {stored_tradingpairs}\n')
-        print('Enter a coins, coins/tradingpairs, or coins/tradingpairs/timeframes to drop in the list above')
+        print('Enter a coins, coins/tradingpairs, or coins/tradingpairs/timeframes to drop in the list above, appending "-drop"s')
         print('='*10 + 'INSTRUCTIONS' + '='*10)
         print('>>> If multiple, seperate by spaces')
         print('>>> To drop all related pairs of a given entry, append "-drop" (e.g. INJ-drop drops all INJ pairs, INJBTC-drop drops all INJBTC pairs)\n')
-        print('>>> To drop given entry from server database aswell, append "1" (e.g. INJ-drop1, BTC1)\n')
+        print('>>> To drop given entry from server database aswell, append "1" to "-drop" (e.g. INJ-drop1, INJBTC-drop1)\n')
+        print('>>> If specifying timeframe to drop, server will remove timeframe from database (e.g. INJBTC-6h)')
         while True:
             coin_symbols = str(input('Input coins: ')).upper()
             if len(coin_symbols) == 0:
                 continue
-            if re_search(coin_symbols):
+            if self.re_search(coin_symbols):
                 continue
             break
         for coin in coin_symbols.split(' '):
@@ -448,8 +450,8 @@ class Notification_server():
                 self.drop_coin(coin)
                 continue # Skip rest of user input interaction. 
             while True:
-                tradingpairs = str(input(f'Input {coin.strip('1')} trading pairs: ')).upper() 
-                if re_search(tradingpairs):
+                tradingpairs = str(input(f'Input {coin} trading pairs: ')).upper() 
+                if self.re_search(tradingpairs):
                     continue
                 tradingpairs = tradingpairs.split(' ')
                 for tradingpair in tradingpairs:
@@ -464,14 +466,15 @@ class Notification_server():
             for tradingpair in input_coin_dict[coin]:
                 while True:
                     timeframes = input(f'Input {coin + tradingpair} timeframes: ')
-                    if re_search(timeframes):
+                    if self.re_search(timeframes):
                         continue
                     if not re.search('[^ ]', timeframes):
                         self.drop_coin(coin + '_' + tradingpair) # This means the user just entered a white space.
-                    for timeframe in timeframes:
+                    for timeframe in timeframes.split(' '):
+                        print(f'timeframe isL {timeframe}')
                         if timeframe == '':
                             continue
-                        self.drop_coin(coin + '_' + pair + '_@' + timeframe) # The highest degree of user input specificity. 
+                        self.drop_coin(coin + '_' + tradingpair + '_@' + timeframe) # The highest degree of user input specificity. 
                     break
         self.SERVER_INSTRUCTION['pause'] = 0 # Unpause server stdout.
 
@@ -481,12 +484,13 @@ class Notification_server():
         Thread(target=self.boost_speed, args=(0.5,), daemon=True).start() # Temporarily increase speed for relavent coin Thread to process delete SERVER_INSTRUCTION. 
 
         item = item.replace('-drop', '')
+        item = item.split('_')
         if len(item) == 1:
-            self.SERVER_INSTRUCTION['drop_coin'] = item
+            self.SERVER_INSTRUCTION['drop_coin'] = item[0]
         elif len(item) == 2:
-            self.SERVER_INSTRUCTION['drop_tp'] = item.replace('_', '')
+            self.SERVER_INSTRUCTION['drop_tp'] = item[0] + item[1]
         else:
-            self.SERVER_INSTRUCTION['drop_tf'] = item.replace('_', '').replace('@', '_')
+            self.SERVER_INSTRUCTION['drop_tf'] = item[0] + item[1] + item[2].replace('@', '_')
 
         self.SERVER_INSTRUCTION['boost'] = 0 # Turn off boost thread.
 
@@ -509,16 +513,20 @@ class Notification_server():
         '''Sends push request to webpage with new data.'''
         pass
 
+    def graph_historical_score(self):
+        '''Handles the analysis of all historical data to generate a comprehensive graph'''
+
+        pass
+
     def notification_settings(self):
-        '''Handles modifying server notification settings'''
+        '''By deafult, server will determine the notification sensistivity based on the historical graph, this method handles the modulation of this sensititity'''
 
-        pass
-    
+        pass 
+
     def notify(self):
-        '''Handles server notification'''
+        '''Handles server notification settings to Windows and pushbullet'''
 
         pass
-
 
     def shutdown_server(self):
         '''When keyword >quit< or HTTP requires 2.0 is receieved, server will shutdown.'''
