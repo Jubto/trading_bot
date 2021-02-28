@@ -7,6 +7,7 @@ import json
 import csv
 import os
 import sys
+import re
 
 
 #https://python-binance.readthedocs.io/en/latest/market_data.html#id7
@@ -353,7 +354,7 @@ class Coin():
 		return stored_timeframes
 
 
-	def current_score(self, tradingpairs=[]):
+	def current_score(self, monitoring=[]):
 		'''Returns current calculated score.
 		   Candle_max_up means: how well the current price change compares with all the historical maxiumal price changes.'''
 
@@ -366,8 +367,8 @@ class Coin():
 		score_bear = 0
 		score_dict = {}
 		csv_files = self.list_saved_files()
-		if tradingpairs:
-			csv_files = [csvfile_name for tradingpair in tradingpairs for csvfile_name in csv_files if tradingpair in csvfile_name] # Only look at certain trading pairs. 
+		if monitoring:
+			csv_files = [csvfile_name for symbol_timeframe in monitoring for csvfile_name in csv_files if symbol_timeframe in csvfile_name] # Only look at certain trading pairs. 
 		for csvfile_name in csv_files:
 			symbol = csvfile_name.split('_')[0]
 			timeframe = csvfile_name.split('_')[1].split('.')[0]
@@ -391,8 +392,13 @@ class Coin():
 		with open(self.json_file, 'r') as jf:
 			coin_data = json.load(jf)
 
+		print(f'score_dict keys: {score_dict.keys()}')
 		for symbol in coin_data:
+			if not re.search(symbol, str(monitoring)):
+				continue # Case where server has requested to not monitor this, but hasn't requested to delete from database.
 			for timeframe in coin_data[symbol]:
+				if not re.search(symbol + timeframe, str(monitoring)):
+					continue # Case where server has requested to not monitor this, but hasn't requested to delete from database.
 				current_change = score_dict[symbol][timeframe]['candle_change']
 				amplitude_change = score_dict[symbol][timeframe]['candle_amplitude']
 				# print(f'timeframe: {timeframe} symbol {symbol} current_change {current_change} amplitude_change {amplitude_change}') #debug
