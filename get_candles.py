@@ -20,9 +20,8 @@ class Coin():
 	INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M'] # All avaliable intervals on binance
 	EARLIEST_DATE = "1 Jan, 2017" # Date binance started
 
-	def __init__(self, coin_symbol, coin_name=None):
-		os.path.dirname(os.path.realpath(__file__))
-		data_path = os.path.abspath('coindata')
+	def __init__(self, coin_symbol, coin_name=None):		
+		data_path = os.path.dirname(os.path.realpath(__file__)) + '/' + 'coindata'
 		coin_path = os.path.join(data_path, coin_symbol)
 		if not os.path.exists(coin_path):
 			os.mkdir(coin_path)
@@ -36,22 +35,22 @@ class Coin():
 		self.json_file = self.coin_path + '/' + 'analysis' + '_' +  self.coin_symbol + '.json'
 		self.previous_update_UTC = None
 
+
 	def get_candles(self, tradingpair, *intervals):
 		'''
-		Saves all historical candle data avliable from binance as csv in coindata directory with its own directory name.
-		Deafult intervals retrieved will be: 1w/3d/1d/4h/1h - additional intervals can be specified.
-			Avaliable intervals are: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 3h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M 
-		If method is called with existing data, any new candles will be appended.		
+		Handles the retreval of raw candle data from binance.
+		If coin has no stored data (i.e. new coin for server) then this will retreve all historical data
+		If coin has data stored, then this will retreve only the latest candle data. 	
 		'''
-		timeframes = ['1w', '3d', '1d', '4h', '1h'] # Deafult timeframes used for this method
+
+		timeframes = [] 
 
 		if type(tradingpair) != str:
-			raise Exception(f'get_candles method requires a string for tradingpair parameter.')
+			raise Exception(f'get_candles method requires a string for tradingpair parameter.') # TODO remove once everything is done, since only server uses this method
 
-		if [interval for interval in intervals if interval != '']:
-			[timeframes.append(str(interval)) for interval in intervals if str(interval) in self.INTERVALS]
-			if len(timeframes) == 5:
-				print(f"Warning: None of the optionals intervals in {intervals} will be added.\nEither they're already part of the deafult, or are invalid.")
+		[timeframes.append(str(interval)) for interval in intervals if str(interval) in self.INTERVALS] # Ensure all intervals provided are valid.
+		if not timeframes:
+			print(f"Warning: None of the optionals intervals in {intervals} will be added.\nEither they're already part of the deafult, or are invalid.")
 		
 		for timeframe in timeframes:
 			datafile = self.csv_filename(tradingpair, timeframe)
@@ -77,12 +76,13 @@ class Coin():
 				else:
 					self.remove_coin() # Means coin symbol does not exist in Binance.
 				return 0
-		self.create_json_file()
-		return 1
+		if timeframes:
+			self.create_json_file()
+			return 1
+
 
 	def remove_timeframe(self, symbol_timeframe):
 		'''Handles removal of timeframe for given coin'''
-		# TODO also update the json file 
 
 		datafile = self.coin_path + '/' + symbol_timeframe + '.csv'
 		if os.path.exists(datafile):
@@ -91,23 +91,27 @@ class Coin():
 		else:
 			print(f'{symbol_timeframe} is already not present in database.')
 
+
 	def remove_tradingpair(self, symbol):
 		'''Handles removal of trading pair from given coin'''
-		# TODO also update the json file 
 
+		if symbol[-1:] == '1':
+			symbol = symbol[:-1] # Removing ending 1
+		print(f'planning to remove {symbol}')
 		files = self.list_saved_files()
 		for f in files:
 			if symbol == f.split('_')[0]:
 				os.remove(self.coin_path + '/' + f)
 		print(f'All files assoicated with {symbol} have been removed.')
 
+
 	def remove_coin(self):
 		'''Handles removing coin'''
-		# TODO also update the json file 
 
-		files = self.list_saved_files()
-		for f in files:
-			os.remove(self.coin_path + '/' + f)
+		files = glob(self.coin_path + '/*')
+		for path in files:
+			print(f'removing path {path}')
+			os.remove(path)
 		os.rmdir(self.coin_path)
 		print(f'All assoicated files for {self.coin_symbol} have been removed.')
 
@@ -130,16 +134,16 @@ class Coin():
 					num_rows = num_rows + int(header.split(':')[1].lstrip('0'))
 					csvfile.seek(0)
 					csvfile.write(f'{final_candle}:{num_rows:030}:{pointer:060}') # Add updated header to beginning. 
-					return None
+					return 1
 
 			csv_writer = csv.writer(csvfile, delimiter=',') # create csv writer object
-			[csv_writer.writerow(kline) for kline in klines[:-1]] # Don't add final candle row as that candle hasn't closed yet
-			
+			[csv_writer.writerow(kline) for kline in klines[:-1]] # Don't add final candle row as that candle hasn't closed yet		
 			if mode == 'w':
 				# If block only activates when creating csv file for first time. 
 				pointer = csvfile.tell()
 				csvfile.seek(0)
 				csvfile.write(f'{final_candle}:{num_rows:030}:{pointer:060}\n') # Add header, length always stays constant. 
+
 
 	@staticmethod
 	def percent_changes(candle_open, candle_high, candle_low, candle_close):
@@ -156,6 +160,7 @@ class Coin():
 		return {'candle_change':round(candle_change, 1), 'candle_amplitude':round(candle_amplitude, 1),
 		'candle_max_up':round(candle_max_up, 1), 'candle_max_down':round(candle_max_down, 1)}
 
+
 	@staticmethod
 	def average(nums):
 		if len(nums) == 0:
@@ -167,6 +172,7 @@ class Coin():
 			total += num
 		return round((total) / len(nums), 1)
 
+
 	def csv_filename(self, tradingpair, timeframe):
 		'''Returns absolute path of coin objects specified csv file'''
 
@@ -177,6 +183,7 @@ class Coin():
 		datafile = symbol + '_' + timeframe
 		return self.coin_path + '/' + datafile + '.csv'
 
+
 	def list_saved_files(self):
 		'''Returns a list of all csv files of coin object. If no csv files are present, raises exception.'''
 
@@ -185,35 +192,28 @@ class Coin():
 		if len(files) == 0:
 			# print(f'WARNING: database has no coin {self.coin_symbol} stored. Please run get_candles method to obtain its data.')
 			return []
-		return [f.split('/')[-1] for f in files] # List of csv file names, e.g. INJBTC_4h.csv (list does not include json file).
+		return [f.split('/')[-1] for f in files] # List of csv file names, e.g. INJBTC_4h.csv (list does not include json file intentionally).
 
 
-	def create_json_object(self, *options):
+	def create_json_object(self, *files):
 		'''This method will return a json string containing trading pair object (key) their timeframes (keys), and % changes (key + list)'''
 		
 		symbol_timeframe = {}
 		csv_files = self.list_saved_files()
 
-		if options:
-			if 'print' not in options:
-				csv_files = options[0]
+		if files:
+			csv_files = files
 
-		for csvfile in csv_files:
-			symbol = csvfile.split('_')[0] # Parent key
-			timeframe = {csvfile.split('_')[1].split('.')[0]:{'candle_change':[], 'candle_amplitude':[], 'candle_max_up':[], 'candle_max_down':[]}} 
+		for csvfile_name in csv_files:
+			symbol = csvfile_name.split('_')[0] # Parent key
+			timeframe = {csvfile_name.split('_')[1].split('.')[0]:{'candle_change':[], 'candle_amplitude':[], 'candle_max_up':[], 'candle_max_down':[]}} 
 			try:
 				symbol_timeframe[symbol].update(timeframe)
 			except KeyError:
 				symbol_timeframe[symbol] = timeframe
 
-		if 'print' in options:
-			print(json.dumps(symbol_timeframe, indent=4))
-		else:
-			return json.dumps(symbol_timeframe, indent=4)
+		return json.dumps(symbol_timeframe, indent=4)
 
-	def print_saved_data(self):
-		'''Prints a summary of all the saved data of given coin object'''
-		self.create_json_object('print')
 
 	def create_json_file(self):
 		'''Creates and returns a json object string'''
@@ -227,8 +227,9 @@ class Coin():
 
 		print(f'New json file for {self.coin_symbol} has been created in: {self.json_file}')
 
+
 	def update_json(self):
-		'''Method used to update a given coins json file if new csv files have since been generated.'''
+		'''Ensures stored csvfiles are synchronous with json by either adding or deleting csvfiles to/from json.'''
 		
 		if not os.path.exists(self.json_file):
 			print(f'New json file for {self.coin_symbol} will be created.')
@@ -243,28 +244,46 @@ class Coin():
 		for symbol in coin_data:
 			for timeframe in coin_data[symbol]:
 				json_data.add((str(symbol) + '_' + str(timeframe) + '.csv'))
-		csv_files.difference_update(json_data)
+		new_csvfiles = csv_files.difference(json_data) # Set contains files stored which are not stored in json
+		old_json_data = json_data.difference(csv_files) # Set contains files stored in json but not stored locally anymore
+		
+		if csv_files.symmetric_difference(json_data):
+			# If there's new csv files not stored in database but not in json this adds them in.
+			if new_csvfiles:
+				new_data_json = json.loads(self.create_json_object(*new_csvfiles))
+				for symbol in new_data_json:
+					for timeframe in new_data_json[symbol]:
+						timeframe_dict = {timeframe:new_data_json[symbol][timeframe]}
+						try:
+							coin_data[symbol].update(timeframe_dict)
+						except KeyError:
+							coin_data[symbol] = timeframe_dict
 
-		# If there's new csv files not stored in the json this adds them in
-		if csv_files:
-			new_data_json = json.loads(self.create_json_object(csv_files))
-			for symbol in new_data_json:
-				for timeframe in new_data_json[symbol]:
-					timeframe_dict = {timeframe:new_data_json[symbol][timeframe]}
-					try:
-						coin_data[symbol].update(timeframe_dict)
-					except KeyError:
-						coin_data[symbol] = timeframe_dict
+			# If there's csvfiles stored in json but not anymore in database this removes them from json.
+			if old_json_data:
+				for old_csvfile_name in old_json_data:
+					symbol = old_csvfile_name.split('_')[0]
+					timeframe = old_csvfile_name.split('_')[1].split('.')[0]
+					coin_data[symbol].pop(timeframe)
+					if len(coin_data[symbol]) == 0:
+						coin_data.pop(symbol)
+
 			with open(self.json_file, 'w') as jf:
-				json.dump(coin_data, jf, indent=4)
+				json.dump(coin_data, jf, indent=4) # Update json file.
+			
+			return 1 # To indicate an update of json file as occurred.
+
 
 	def add_data_to_json(self):
+		'''Retreves candle data starting from last updated date and then updates the json'''
+
 		if not os.path.exists(self.json_file):
 			raise Exception(f'Coin {self.coin_symbol} has no json file.')
 
 		with open(self.json_file, 'r') as jf:
 			coin_data = json.load(jf)
 
+		to_remove = {} # Store list of keys to remove if json file is not up to date to stored csvfiles. 
 		for symbol in coin_data:
 			for timeframe in coin_data[symbol]:
 				datafile = self.csv_filename(symbol.split(self.coin_symbol)[1], timeframe)
@@ -273,7 +292,7 @@ class Coin():
 					saved_data_len = int(header.split(':')[1].lstrip('0'))
 					data_list = coin_data[symbol][timeframe]['candle_change']
 					if len(data_list) < saved_data_len:
-						skip = len(data_list)
+						skip = len(data_list) # Skip rows of csvfile until new data is reached. 
 						change_dict_list = []
 						for row in csvfile:
 							if skip > 0:
@@ -294,29 +313,45 @@ class Coin():
 								coin_data[symbol][timeframe][data].sort(reverse=False)
 							else:
 								coin_data[symbol][timeframe][data].sort(reverse=True)
-						# print(f'{symbol} {timeframe} Has been updated.')
-					# else:
-						# print(f'{symbol} {timeframe} Up to date, file skipped!')
-		
+	
 		with open(self.json_file, 'w') as jf:
 			json.dump(coin_data, jf, indent=4)
+
 
 	def update(self):
 		'''Updates all csv and json files of given file object.'''
  
-		# Each coin object will only update their database at most every hour.
-		if self.previous_update_UTC == None or (time() - self.previous_update_UTC >= 3600):
+		# Perform this low cost update everytime update() is called. Ensures json file is synchronous with stored csvfiles. 
+		need_update = False
+		if self.update_json():
+			need_update = True
+
+		# More expensive update, only perform at most every hour (unless needed via need_update). This updates candle/json data.
+		if need_update or self.previous_update_UTC == None or (time() - self.previous_update_UTC >= 3600):
 			csv_files = self.list_saved_files()
 			tradingpairs = set()
 			trim = len(self.coin_symbol)
-			for csvfile in csv_files:
-				tradingpair = csvfile.split('_')[0][trim:]
+			for csvfile_name in csv_files:
+				tradingpair = csvfile_name.split('_')[0][trim:]
 				tradingpairs.add(tradingpair)
 			for tradingpair in tradingpairs:
-				self.get_candles(tradingpair)
-			self.update_json()
-			self.add_data_to_json()
-			# print(f'All csv and json files of coin {self.coin_symbol} are up to date.')
+				stored_timeframes = self.get_timeframes(self.coin_symbol + tradingpair)
+				self.get_candles(tradingpair, *stored_timeframes)
+			self.add_data_to_json() # Adds latests candle data to json 
+
+
+	def get_timeframes(self, symbol):
+		'''Given a coin-trading pair, returns a list of stored timeframes.'''
+
+		files = self.list_saved_files()
+		stored_timeframes = []
+		if files:
+			for csvfile_name in files:
+				symbol_timeframe = csvfile_name.split('.')[0]
+				if symbol in symbol_timeframe:
+					stored_timeframes.append(symbol_timeframe.split('_')[1])
+		return stored_timeframes
+
 
 	def current_score(self, tradingpairs=[]):
 		'''Returns current calculated score.
@@ -332,13 +367,13 @@ class Coin():
 		score_dict = {}
 		csv_files = self.list_saved_files()
 		if tradingpairs:
-			csv_files = [csvfile for tradingpair in tradingpairs for csvfile in csv_files if tradingpair in csvfile] # Only look at certain trading pairs. 
-		for csvfile in csv_files:
-			symbol = csvfile.split('_')[0]
-			timeframe = csvfile.split('_')[1].split('.')[0]
-			csvfile = self.coin_path + '/' + csvfile
-			with open(csvfile, 'r', newline='') as cf:
-				final_candle = cf.readline().split(':')[0]
+			csv_files = [csvfile_name for tradingpair in tradingpairs for csvfile_name in csv_files if tradingpair in csvfile_name] # Only look at certain trading pairs. 
+		for csvfile_name in csv_files:
+			symbol = csvfile_name.split('_')[0]
+			timeframe = csvfile_name.split('_')[1].split('.')[0]
+			csvfile_name = self.coin_path + '/' + csvfile_name
+			with open(csvfile_name, 'r', newline='') as csvfile:
+				final_candle = csvfile.readline().split(':')[0]
 				klines = client.get_historical_klines(symbol, timeframe, int(final_candle))
 				candles = klines[0]
 				candle_open = candles[1]
@@ -357,12 +392,10 @@ class Coin():
 			coin_data = json.load(jf)
 
 		for symbol in coin_data:
-			if symbol not in score_dict.keys():
-				continue
 			for timeframe in coin_data[symbol]:
 				current_change = score_dict[symbol][timeframe]['candle_change']
 				amplitude_change = score_dict[symbol][timeframe]['candle_amplitude']
-				# print(f'\n\ntimeframe: {timeframe} symbol {symbol} current_change {current_change} amplitude_change {amplitude_change}')
+				# print(f'timeframe: {timeframe} symbol {symbol} current_change {current_change} amplitude_change {amplitude_change}') #debug
 				for data in coin_data[symbol][timeframe]:
 					historical_candles_changes = coin_data[symbol][timeframe][data]
 					historical_average = self.average(coin_data[symbol][timeframe][data])
@@ -417,6 +450,7 @@ class Coin():
 						score_dict[symbol][timeframe][data] = str(performance) + '|' + str(amplitude_change) + '|' + str(historical_average) 
 					else:
 						score_dict[symbol][timeframe][data] = str(performance) + '|' + str(current_change) + '|' + str(historical_average) 
+					# print(f'symbol {symbol} timeframe {timeframe} data {data}: ' + str(performance) + '|' + str(current_change) + '|' + str(historical_average))
 							
 		for symbol in score_dict:
 			for timeframe in score_dict[symbol]:
@@ -425,6 +459,7 @@ class Coin():
 				for data in score_dict[symbol][timeframe]:
 					if score_dict[symbol][timeframe][data] == 'NA':
 						continue
+					# print(f'symbol {symbol} timeframe {timeframe} data {data}: {score_dict[symbol][timeframe][data]} type is {type(score_dict[symbol][timeframe][data])}')
 					stats = score_dict[symbol][timeframe][data].split('|')
 					performance = float(stats[0])
 					change = stats[1]
@@ -475,6 +510,14 @@ class Coin():
 	def graph_historical_data(self):
 		# Take notes from project-falcon
 		# Perhaps make a class dedicated to graphing
+		pass 
+
+	def volumn(self):
+		# convert INJ volumne data to usdt - add this data to graph 
+		pass
+
+	def volumn_score(self):
+		# compare given candle volumne with all other historical volumns to generate a single score - add this data to graph 
 		pass 
 
 	def sell_assest(self):
