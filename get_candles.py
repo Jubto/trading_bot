@@ -91,27 +91,26 @@ class Coin():
 			print(f'{symbol_timeframe} has been removed.')
 		else:
 			print(f'{symbol_timeframe} is already not present in database.')
+		if len(glob(self.coin_path + '/*')) == 0:
+			self.remove_coin()
 
 
 	def remove_tradingpair(self, symbol):
 		'''Handles removal of trading pair from given coin'''
 
-		if symbol[-1:] == '1':
-			symbol = symbol[:-1] # Removing ending 1
-		print(f'planning to remove {symbol}')
 		files = self.list_saved_files()
 		for f in files:
 			if symbol == f.split('_')[0]:
 				os.remove(self.coin_path + '/' + f)
 		print(f'All files assoicated with {symbol} have been removed.')
-
+		if len(glob(self.coin_path + '/*')) == 0:
+			self.remove_coin()
 
 	def remove_coin(self):
 		'''Handles removing coin'''
 
 		files = glob(self.coin_path + '/*')
 		for path in files:
-			print(f'removing path {path}')
 			os.remove(path)
 		os.rmdir(self.coin_path)
 		print(f'All assoicated files for {self.coin_symbol} have been removed.')
@@ -392,12 +391,12 @@ class Coin():
 		with open(self.json_file, 'r') as jf:
 			coin_data = json.load(jf)
 
-		print(f'score_dict keys: {score_dict.keys()}')
+		# print(f'score_dict keys: {score_dict.keys()}')
 		for symbol in coin_data:
 			if not re.search(symbol, str(monitoring)):
 				continue # Case where server has requested to not monitor this, but hasn't requested to delete from database.
 			for timeframe in coin_data[symbol]:
-				if not re.search(symbol + timeframe, str(monitoring)):
+				if not re.search(symbol + '_' + timeframe, str(monitoring)):
 					continue # Case where server has requested to not monitor this, but hasn't requested to delete from database.
 				current_change = score_dict[symbol][timeframe]['candle_change']
 				amplitude_change = score_dict[symbol][timeframe]['candle_amplitude']
