@@ -14,3 +14,5 @@ INCOMPLETE trading bot server project
 #TODO Webpage to interact with server
 
 #TODO Possibly add emergency trading functionaility 
+
+#TODO Make a clear readme doc with images of commands and the outputs (coindata, csvs, json, graphs)
