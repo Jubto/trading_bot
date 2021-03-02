@@ -9,6 +9,8 @@ INCOMPLETE trading bot server project
 
 #TODO Determining optimal notification settings based on historical data
 
+  #TODO implement ML algo to determine best settings for a given coin - using profit as a heuristic 
+
 #TODO Possibly add older exchanges with more historical data
 
 #TODO Webpage to interact with server
