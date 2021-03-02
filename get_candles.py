@@ -18,7 +18,8 @@ client = Client(API_KEY, API_SECRET) # new client object
 class Coin():
 	'''A class which retrieves candle stick data for a given coin avaliable on Binance, performs TA on the stored data, can return a score.'''
 
-	INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M'] # All avaliable intervals on binance
+	# All avaliable intervals on binance
+	INTERVALS = {'1m':15, '3m':14, '5m':13, '15m':12, '30m':11, '1h':10, '2h':9, '3h':8, '4h':7, '6h':6, '8h':5, '12h':4, '1d':3, '3d':2, '1w':1, '1M':0} 
 	EARLIEST_DATE = "1 Jan, 2017" # Date binance started
 
 	def __init__(self, coin_symbol, coin_name=None):		
@@ -50,8 +51,10 @@ class Coin():
 			raise Exception(f'get_candles method requires a string for tradingpair parameter.') # TODO remove once everything is done, since only server uses this method
 
 		[timeframes.append(str(interval)) for interval in intervals if str(interval) in self.INTERVALS] # Ensure all intervals provided are valid.
-		if not timeframes:
-			print(f"Warning: None of the optionals intervals in {intervals} will be added.\nEither they're already part of the deafult, or are invalid.")
+		if len(timeframes) != len(intervals):
+			invalid = [entry for entry in intervals if entry not in timeframes and entry != '']
+			if invalid:
+				print(f"Warning: None of the optionals intervals in {invalid} will be added.\nEither they're already part of the deafult, or are invalid.")
 		
 		for timeframe in timeframes:
 			datafile = self.csv_filename(tradingpair, timeframe)
@@ -85,6 +88,7 @@ class Coin():
 	def remove_timeframe(self, symbol_timeframe):
 		'''Handles removal of timeframe for given coin'''
 
+		symbol_timeframe = symbol_timeframe[1:] # Remove leading 3
 		datafile = self.coin_path + '/' + symbol_timeframe + '.csv'
 		if os.path.exists(datafile):
 			os.remove(datafile)
@@ -98,6 +102,7 @@ class Coin():
 	def remove_tradingpair(self, symbol):
 		'''Handles removal of trading pair from given coin'''
 
+		symbol = symbol[1:] # Remove leading 2
 		files = self.list_saved_files()
 		for f in files:
 			if symbol == f.split('_')[0]:
@@ -478,7 +483,7 @@ class Coin():
 							score_dict[symbol][timeframe][data] = "Rank is: " + str(performance) + f' | change is: {change}%' + f' | average is: {average}%' 
 
 					# This means the current candle performed in the bottom 80% or bellow all historical candles (i.e. bear - buy)
-					elif performance >= 80:
+					elif performance >= 80 and data not in ['candle_max_up', 'candle_max_down']:
 						if performance >=95:
 							score_dict[symbol][timeframe][data] = "Rank is: " + str(performance) + '!!!' + f' | change is: {change}%' + f' | average is: {average}%' 
 						else:

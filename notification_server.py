@@ -26,7 +26,7 @@ class Notification_server():
     MONITORED_COINS = {} # Dict of coins server is currently monitoring. 
     MESSAGE_BACKLOG = [] # List of messages for server_stdout() to process in order. 
     SERVER_COMMANDS = ['commands', 'monitor', 'all', 'now', 'drop', 'monitoring', 'request_interval', 'quit', 'stdout', 'server_speed', 'notify', 'debug']
-    SERVER_INSTRUCTION = {'drop': 0, "stdout": 1, 'request_interval': 0, 'pause': 0, 'boost': 0}
+    SERVER_INSTRUCTION = {'drop': 0, "stdout": 1, 'request_interval': [], 'pause': 0, 'boost': 0}
 
     tickspeed_handler = Event() # Event object to handle server tick speed. 
     server_shutdown = Event() # Event object to handle server shutdown if command 'quit' is entered.
@@ -164,7 +164,7 @@ class Notification_server():
     def monitor_coin(self, coin_symbol):
         '''Thread starts the monitoring and score calculation of given coin. Handles external signals to drop activity'''
 
-        coin = Coin(coin_symbol)
+        coin = Coin(coin_symbol) # Create coin object.
         trim = len(coin_symbol)
         while True:
             self.tickspeed_handler.wait() # Releases every server tick.
@@ -192,8 +192,8 @@ class Notification_server():
                     print(f'The following has been dropped: {item_to_drop[1:]}')
 
             # Check to see whether request timer has activated.
-            time.sleep(self.SERVER_SPEED / 10) # Allow time for request_interval_handler to update value of SERVER_INSTRUCTION. 
-            if self.SERVER_INSTRUCTION['request_interval']:
+            if coin_symbol in self.SERVER_INSTRUCTION['request_interval']:
+                self.SERVER_INSTRUCTION['request_interval'].remove(coin_symbol) # Let's request_interval thread know which coins have started scoring.
                 symbol_timeframes = self.MONITORED_COINS[coin_symbol] # Only monitor specified tradingpairs.
                 coin_score = coin.current_score(monitoring=symbol_timeframes) # Retreve coin score and analysis summary. 
                 if re.search(coin_symbol, str(self.SERVER_INSTRUCTION['drop'])):
@@ -201,7 +201,7 @@ class Notification_server():
                 self.server_push(coin_score) # Sends data to webpage.
                 if self.SERVER_INSTRUCTION['stdout']:
                     self.MESSAGE_BACKLOG.append(coin_score) # Send data to stdout method. 
-                #TODO Add a file option. I think having a file which re-writes itself with the latest score will be easier to work with, and turn of stdout
+                #TODO Add a file option. I think having a file which re-writes itself with the latest score will be easier to work with, and turn of stdout Be like coin.to_csv() 
 
 
     def current_monitoring(self):
@@ -226,28 +226,31 @@ class Notification_server():
 
 
     def monitor_all_coins(self, coins=None):
-        '''Hanndles server coin monitoring initiation'''
+        '''Hanndles server coin monitoring initiation and 'all' command'''
 
         if not coins:
             paths = glob(self.data_path + '/*') 
             if len(paths) == 0:
-                self.input_monitor_new()
+                self.input_monitor_new() # If no coins are found in coindata directory, prompt user to enter coin.
             coins = [path.split('/')[-1] for path in paths] # Clean path to get only the directory name (i.e. coin_symbol).
 
         coins_to_add = set()
         for coin in coins:
-            coins_to_add = coins_to_add.union(self.add_to_monitoring(coin.upper()))
-        self.add_new_coins(coins_to_add)
+            coins_to_add = coins_to_add.union(self.add_to_monitoring(coin.upper())) # Validate each coin entered, add to monitoring
+        self.add_new_coins(coins_to_add) # Start thread for each coin if one doesn't already exist.
 
 
     def request_interval_handler(self):
         '''Thread used to synchronise all monitor_coin method threads'''
 
         while True:
-            self.tickspeed_handler.wait() # Releases every server tick.
-            self.SERVER_INSTRUCTION['request_interval'] = 1 # Change class variable value.
-            time.sleep(self.SERVER_SPEED / 5) # Keep request_interval value at 1 for a short amount of time.
-            self.SERVER_INSTRUCTION['request_interval'] = 0
+            threads = [str(thread).split(',')[0].split('(')[1] for thread in list_threads()] # List all activate threads.
+            coins = [coin for coin in threads if coin in self.MONITORED_COINS] # List only active coin threads.
+            self.SERVER_INSTRUCTION['request_interval'] = coins # Change global variable to be list of coins ready to have scores checked.
+            Thread(target=self.boost_speed, args=(0.1,), daemon=True).start() # Temporarily boost server speed for faster processing. 
+            while self.SERVER_INSTRUCTION['request_interval'] != []:
+                self.tickspeed_handler.wait() # Keep checking every server tick whether all coin threads have starting scoring.
+            self.SERVER_INSTRUCTION['boost'] = 0 # Turn off boost thread.
             time.sleep(self.REQUEST_INTERVAL) # Releases every request_interval time. 
 
     def now(self):
@@ -258,9 +261,9 @@ class Notification_server():
         '''Thread server speed, every SERVER_SPEED time elapsed will release the tickspeed_handler object'''
         
         while True:
-            self.tickspeed_handler.set()
-            time.sleep(self.SERVER_SPEED / 10)
-            self.tickspeed_handler.clear()
+            self.tickspeed_handler.set() # Releases the event object for all active threads from waiting.
+            time.sleep(self.SERVER_SPEED / 10) # Just a simple measure to ensure all threads get released, not worth being more sophisticated. 
+            self.tickspeed_handler.clear() # Locks server wide event object. 
             time.sleep(self.SERVER_SPEED)
 
 
@@ -274,10 +277,9 @@ class Notification_server():
             messages = self.MESSAGE_BACKLOG
             self.MESSAGE_BACKLOG = [] # Empty message log.
 
-            while True:
-                # This is used for when user is actively inputting inputs into server (excluding commands).
+            while True:         
                 if self.SERVER_INSTRUCTION['pause'] == 1:
-                    time.sleep(1) 
+                    time.sleep(1) # This is used for when user is actively inputting inputs into server (excluding commands).
                     continue
                 break
 
@@ -470,15 +472,17 @@ class Notification_server():
 
             for tradingpair in input_coin_dict[coin]:
                 while True:
-                    timeframes = str(input(f'Input {coin + tradingpair} timeframes: ')).upper()
+                    timeframes = str(input(f'Input {coin + tradingpair} timeframes: '))
                     if self.re_search(timeframes):
                         continue
                     if not re.search('[^ ]', timeframes):
                         to_drop.add(coin + '_' + tradingpair) # This means the user just entered a white space.
                     for timeframe in timeframes.split(' '):
-                        if timeframe == '':
-                            continue
-                        to_drop.add(coin + '_' + tradingpair + '_@' + timeframe) # The highest degree of user input specificity. 
+                        if timeframe == '' or len(timeframe) != 2 or timeframe[-1] in '0123456789':
+                            continue # Remove impossible entries.
+                        if timeframe == '1m':
+                            timeframe = '1M' # 1M month is the only timeframe with uppercase. 1m is for 1 minute however that should never be used. 
+                        to_drop.add(coin + '_' + tradingpair + '_@' + timeframe)  
                     break
         Thread(target=self.drop_coins, args=(to_drop,), daemon=True).start()
         self.SERVER_INSTRUCTION['pause'] = 0 # Unpause server stdout.
@@ -490,7 +494,7 @@ class Notification_server():
         for item in to_drop:
             item = item.replace('-DROP', '')
             item = item.split('_')
-            print(f'SERVER drop self.SERVER_INSTRUCTION will be {item}')
+            print(f'SERVER drop self.SERVER_INSTRUCTION will be {item}') #TODO remove
             if len(item) == 1:
                 self.SERVER_INSTRUCTION['drop'] = '1' + item[0]
                 while self.SERVER_INSTRUCTION['drop'] != 0:
