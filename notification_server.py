@@ -186,10 +186,10 @@ class Notification_server():
                     for pair in clone_MONITORED_COINS:
                         if item_to_drop[1:] == pair or item_to_drop[1:] in pair:
                             self.MONITORED_COINS[coin_symbol].remove(pair)
+                    print(f'The following has been dropped: {item_to_drop[1:]}')
                     if '1' == item_to_drop[0] or len(self.MONITORED_COINS[coin_symbol]) == 0:
                         self.MONITORED_COINS.pop(coin_symbol)
                         return 0 # Drop this coin thread.
-                    print(f'The following has been dropped: {item_to_drop[1:]}')
 
             # Check to see whether request timer has activated.
             if coin_symbol in self.SERVER_INSTRUCTION['request_interval']:
@@ -544,8 +544,26 @@ class Notification_server():
 
     def notify(self):
         '''Handles server notification settings to Windows and pushbullet'''
+        # This will talk with a shell script via subprocess module 
+        # parameters: User email, -optional user phone number if they want text
+        # Option: Detailed message or short message
+        # option: Spam them or single notification
+        # 
+        # Need a script to set up postifx server if user doesn't have it - use sed to modify main.c
+        # Need script for sending the email via postifx
+        # Need a script for receiving the email 
 
+        # IDEA have the server create a new file called user upon the first time logging into the server.
+        # Subseqent log ins will have a different welcome and interface with the user.
+        # For the first ever log in, the server will run scripts to check for postfix, if it doesn't have one, then it will ask to install and provide a user name (domain)
+        # If there is already a postfix, server will search for domain name, and possibly modify their postfix file so that it can message gmail
+        # user will have to enter email and mobile if they want that functionaility 
+        # Make a command which allows them to change that 
         pass
+
+    def recieve_instruction(self):
+        pass
+        # This thread will always be running, pinging the MTA for a new message or not. I.e. the user can control the server externally where ever - to sell, shut down, etc.
 
     def debug(self):
         '''Helper method which returns all coin threads currently running on the server'''
