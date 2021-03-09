@@ -1,6 +1,8 @@
 #!/bin/sh
 
-if grep -E 'Shutdown status: good' shutdown_status.txt)
+self_dir="$(dirname -- "$0")"
+
+if grep -E 'Shutdown status: good' "${self_dir}"/server_attributes/shutdown_status.txt)
 then
     :
 else
@@ -13,13 +15,13 @@ else
         echo "This is an issue because tradingbot server always sets the main.cf back to its stored back up version upon shutdown."
         echo -n "Press enter to view tradingbot servers backup of /etc/postfix/main.cf:"
         read line
-        cat postfix_original/postfix_main_original.cf
+        cat "${self_dir}"/server_attributes/postfix_main_original.cf
         echo -n "\nIs this backup of main.cf fine for tradingbot server to set as your system main.cf after shutdown? (y/n):"
         while read response
         do
             if test "$response" = 'y'
             then
-                cat postfix_original/postfix_main_original.cf > /etc/postfix/main.cf
+                cat "${self_dir}"/server_attributes/postfix_main_original.cf > /etc/postfix/main.cf
                 echo "/etc/postfix/main.cf has been reverted to last back up version."
                 echo "Server process will continue as normal."
                 exit 0 
@@ -39,11 +41,13 @@ else
             then
                 echo -n "Provide file path to alternative version of main.cf:"
                 read path
-                if cat "$path" > postfix_original/postfix_main_original.cf
+                if ls "$path" >/dev/null 2>&1
                 then 
+                    cat "$path" > "${self_dir}"/server_attributes/postfix_main_original.cf
                     echo "Server process will continue as normal."
                     exit 0
                 else
+                    echo "Invalid path, file does not exist. Please try again:" 
                     echo -n "Would you like to enter an alternative version of main.cf to set as deafult? (y/n)"
                     continue
                 fi

@@ -1,12 +1,13 @@
 from threading import Thread, Event, enumerate as list_threads
-from get_candles import Coin 
+from get_candles import Coin # Self made
 from glob import glob
-import re
-import sys
-import os
+import subprocess
 import socket
 import time
 import json 
+import sys
+import re
+import os
 
 
 class Notification_server():
@@ -26,7 +27,7 @@ class Notification_server():
     MONITORED_COINS = {} # Dict of coins server is currently monitoring. 
     MESSAGE_BACKLOG = [] # List of messages for server_stdout() to process in order. 
     SERVER_COMMANDS = ['commands', 'monitor', 'all', 'now', 'drop', 'monitoring', 'request_interval', 'quit', 'stdout', 'server_speed', 'notify', 'debug']
-    SERVER_INSTRUCTION = {'drop': 0, "stdout": 1, 'request_interval': [], 'pause': 0, 'boost': 0}
+    SERVER_INSTRUCTION = {'drop': '', "stdout": 1, 'request_interval': [], 'pause': 0, 'boost': 0}
 
     tickspeed_handler = Event() # Event object to handle server tick speed. 
     server_shutdown = Event() # Event object to handle server shutdown if command 'quit' is entered.
@@ -50,6 +51,7 @@ class Notification_server():
         Thread(target=self.server_stdout, name='server_stdout', daemon=True).start() # Handles smooth server stdout. 
         Thread(target=self.server_user_stdinput, name='server_input', daemon=True).start() # Ready server to intake user inputs
         Thread(target=self.server_listen, name='server_listen', daemon=True).start() # Ready server to receive HTTP requests from client (i.e. trading_bot webpage)
+
 
     def server_start(self):
         '''Server welcome'''
@@ -170,9 +172,9 @@ class Notification_server():
             self.tickspeed_handler.wait() # Releases every server tick.
 
             # Check to see whether coin drop instruction is activate.
-            if self.SERVER_INSTRUCTION['drop'] != 0 and self.SERVER_INSTRUCTION['drop'][1:trim + 1] == coin_symbol:    
+            if self.SERVER_INSTRUCTION['drop'] and self.SERVER_INSTRUCTION['drop'][1:trim + 1] == coin_symbol:    
                 item_to_drop = self.SERVER_INSTRUCTION['drop']
-                self.SERVER_INSTRUCTION['drop'] = 0
+                self.SERVER_INSTRUCTION['drop'] = ''
                 if re.search(item_to_drop.rstrip('1')[1:], str(self.MONITORED_COINS[coin_symbol])):
                     if '1' == item_to_drop[-1]:
                         item_to_drop = item_to_drop.rstrip('1')
@@ -478,8 +480,9 @@ class Notification_server():
                     if not re.search('[^ ]', timeframes):
                         to_drop.add(coin + '_' + tradingpair) # This means the user just entered a white space.
                     for timeframe in timeframes.split(' '):
-                        if timeframe == '' or len(timeframe) != 2 or timeframe[-1] in '0123456789':
-                            continue # Remove impossible entries.
+                        timeframe = timeframe.replace('-drop', '') # Incase user appended -drop, which is not needed.
+                        if timeframe == '' or len(timeframe) > 3 or timeframe[-1] in '0123456789':
+                            continue # Remove impossible entries immediately.
                         if timeframe == '1m':
                             timeframe = '1M' # 1M month is the only timeframe with uppercase. 1m is for 1 minute however that should never be used. 
                         to_drop.add(coin + '_' + tradingpair + '_@' + timeframe)  
@@ -497,15 +500,15 @@ class Notification_server():
             print(f'SERVER drop self.SERVER_INSTRUCTION will be {item}') #TODO remove
             if len(item) == 1:
                 self.SERVER_INSTRUCTION['drop'] = '1' + item[0]
-                while self.SERVER_INSTRUCTION['drop'] != 0:
+                while self.SERVER_INSTRUCTION['drop']:
                     self.tickspeed_handler.wait()
             elif len(item) == 2:
                 self.SERVER_INSTRUCTION['drop'] = '2' + item[0] + item[1]
-                while self.SERVER_INSTRUCTION['drop'] != 0:
+                while self.SERVER_INSTRUCTION['drop']:
                     self.tickspeed_handler.wait()
             else:
                 self.SERVER_INSTRUCTION['drop'] = '3' + item[0] + item[1] + item[2].replace('@', '_')
-                while self.SERVER_INSTRUCTION['drop'] != 0:
+                while self.SERVER_INSTRUCTION['drop']:
                     self.tickspeed_handler.wait()
         self.SERVER_INSTRUCTION['boost'] = 0 # Turn off boost thread.
 
@@ -517,7 +520,7 @@ class Notification_server():
             print(f'Invalid characters used in {string}.')
             return 1
         if re.search('-', string):
-            if not re.search('(-DROP)', string):
+            if not re.search('-drop', string, re.IGNORECASE):
                 print(f'Invalid characters used in {string}.')
                 return 1
 
@@ -542,8 +545,10 @@ class Notification_server():
 
         pass 
 
-    def notify(self):
-        '''Handles server notification settings to Windows and pushbullet'''
+    def notification_init(self):
+        '''Handles postfix initiation and SMTP communication with user gmail'''
+
+        notification_init_process = subprocess.run([])
         # This will talk with a shell script via subprocess module 
         # parameters: User email, -optional user phone number if they want text
         # Option: Detailed message or short message
