@@ -543,11 +543,15 @@ class Notification_server():
     def notification_settings(self):
         '''By deafult, server will determine the notification sensistivity based on the historical graph, this method handles the modulation of this sensititity'''
 
+        # Also allow user to set whether the server can send a message once an 1hour just as a summery, with a different subject title in order to avoid phone buzz
+
         pass 
 
     def notification_init(self):
         '''Handles postfix initiation and SMTP communication with user gmail'''
 
+        # Note, you have to run the scripts with their full paths to be safe 
+        # Note: maybe if you run the scripts with their full paths from python, then their $0 first arg will be the true absolute path, and you don't have to use realpath 
         notification_init_process = subprocess.run([])
         # This will talk with a shell script via subprocess module 
         # parameters: User email, -optional user phone number if they want text

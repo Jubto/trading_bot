@@ -4,7 +4,7 @@
 # Exit 1 means exit python notify function
 # Exit 2 means re-run python notify function
 
-self_dir="$(dirname -- "$0")"
+self_dir=$(dirname "$(realpath -s "$0")")
 
 if which postfix > /dev/null
 then
@@ -16,18 +16,17 @@ then
         echo -n 'Restart postfix server (y/n): '
         then while read response
         do 
-            if test "$response" = 'y'
-            then 
-                service postfix stop >/dev/null
-                break
-            elif test "$response" = 'n'
-            then   
-                echo "Tradingbot server will not commence notification service. Run 'notify' command if you change your mind."
-                exit 1
-            else   
-                echo "Invalid response, please enter either 'y' or 'n'"
-                echo -n 'Restart postfix server (y/n): '  
-            fi
+            case "$response" in
+            [Yy]|[Yy]es )
+                            service postfix stop >/dev/null
+                            break ;;
+            [Nn]|[Nn]o  ) 
+                            echo "Tradingbot server will not commence notification service. Run 'notify' command if you change your mind."
+                            exit 1 ;;
+            *|""        )
+                            echo "Invalid response, please enter either 'y' or 'n'"
+                            echo -n 'Restart postfix server (y/n): '  
+            esac
         done < /dev/stdin
     elif test $? -eq 3
         then :
@@ -98,39 +97,35 @@ eof
                 echo -n "\nTradingbot server will use gmail ${email} for notification communication, confirm? (y/n): "
                 while read response
                 do 
-                    if test "$response" = 'y'
-                    then
-                        echo "[smtp.gmail.com]:587 ${email}:${password2}" | cat > /etc/postfix/sasl/sasl_passwd_tradingbot
-                        postmap /etc/postfix/sasl/sasl_passwd_tradingbot
-                        chown root:root /etc/postfix/sasl/sasl_passwd_tradingbot.db
-                        chmod 600 /etc/postfix/sasl/sasl_passwd_tradingbot.db
-                        rm /etc/postfix/sasl/sasl_passwd_tradingbot
-                        
-                        echo "notification gmail: ${email}" | cat >> "${self_dir}"/server_attributes/postfix.txt
-                        echo "Password has been hashed."
-                        echo "Postfix server will restart..."
-                        service postfix restart >/dev/null
-                        echo "\nTo finalise setup, please set your 'Less secure app access' for the specified gmail to ON"
-                        echo "Use this link to change it: https://myaccount.google.com/lesssecureapps" 
-                        echo -n "Hit Enter once completed: "
-                        read line
-                        echo "Trading server and postfix server setup completed. Notifications service will now commence!"
-                        exit 0
-                    elif test "$response" = 'n'
-                    then
-                        echo "Server notification setup will not commence. To retry, run 'notify' command again."
-                        cat "${self_dir}"/server_attributes/postfix_main_original.cf > /etc/postfix/main.cf
-                        exit 1 
-                    else
-                        echo "Invalid response, please enter either 'y' or 'n'"
-                        echo -n "Tradingbot server will use gmail ${email} for notification communication, confirm? (y/n): "
-                    fi
+                    case "$response" in
+                    [Yy]|[Yy]es )
+                                    echo "[smtp.gmail.com]:587 ${email}:${password2}" | cat > /etc/postfix/sasl/sasl_passwd_tradingbot
+                                    postmap /etc/postfix/sasl/sasl_passwd_tradingbot
+                                    chown root:root /etc/postfix/sasl/sasl_passwd_tradingbot.db
+                                    chmod 600 /etc/postfix/sasl/sasl_passwd_tradingbot.db
+                                    rm /etc/postfix/sasl/sasl_passwd_tradingbot
+                                    echo "notification gmail: ${email}" | cat >> "${self_dir}"/server_attributes/postfix.txt
+                                    echo "Password has been hashed."
+                                    echo "Postfix server will restart..."
+                                    service postfix restart >/dev/null
+                                    echo "\nTo finalise setup, please set your 'Less secure app access' for the specified gmail to ON"
+                                    echo "Use this link to change it: https://myaccount.google.com/lesssecureapps" 
+                                    echo -n "Hit Enter once completed: "
+                                    read line
+                                    echo "Trading server and postfix server setup completed. Notifications service will now commence!"
+                                    exit 0 ;;
+                    [Nn]|[Nn]o  ) 
+                                    echo "Server notification setup will not commence. To retry, run 'notify' command again."
+                                    cat "${self_dir}"/server_attributes/postfix_main_original.cf > /etc/postfix/main.cf
+                                    exit 1 ;;
+                    *|""        )
+                                    echo "Invalid response, please enter either 'y' or 'n'"
+                                    echo -n "Tradingbot server will use gmail ${email} for notification communication, confirm? (y/n): "
+                    esac
                 done < /dev/stdin
             else
                 echo "Passwords entered do not match. Please try again"
-                continue
             fi
-            break
         done
     fi
 else
@@ -138,26 +133,23 @@ else
     echo -n 'Install postfix (y/n): '
     while read response
     do 
-        if test "$response" = 'y'
-            then 
-                echo "Installation process is about to commence."
-                echo "NOTE: After installation, a postfix window will open. Hit enter for 'Internet Site'"
-                echo "NOTE: Next, hit enter again when the next window opens (i.e. system mail name set to be deafult user domain name)"
-                echo -n "Hit enter to commence installation or ctrl + C to opt out:"
-                read line
-                apt-get install mailutils
-                cat /etc/postfix/main.cf > "${self_dir}"/server_attributes/postfix_main_original.cf
-                exit 2 # for python
-        elif test "$response" = 'n'
-            then 
-                echo "No postfix will be installed. Tradingbot notification service will not be activated."
-                echo "Run notification command to try again if desired."
-                exit 1 # for python
-        else
-            echo "Invalid response, please enter either 'y' or 'n'"
-            echo -n 'Install postfix (y/n): '
-            continue
-        fi
-        break
+        case "$response" in
+        [Yy]|[Yy]es )
+                        echo "Installation process is about to commence."
+                        echo "NOTE: After installation, a postfix window will open. Hit enter for 'Internet Site'"
+                        echo "NOTE: Next, hit enter again when the next window opens (i.e. system mail name set to be deafult user domain name)"
+                        echo -n "Hit enter to commence installation or ctrl + C to opt out:"
+                        read line
+                        apt-get install mailutils
+                        cat /etc/postfix/main.cf > "${self_dir}"/server_attributes/postfix_main_original.cf
+                        exit 2 ;;
+        [Nn]|[Nn]o  ) 
+                        echo "No postfix will be installed. Tradingbot notification service will not be activated."
+                        echo "Run notification command to try again if desired."
+                        exit 1 ;;
+        *|""        )
+                        echo "Invalid response, please enter either 'y' or 'n'"
+                        echo -n 'Install postfix (y/n): '
+        esac
     done < /dev/stdin
 fi
