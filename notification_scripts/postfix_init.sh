@@ -4,7 +4,7 @@
 # Exit 1 means exit python notify function
 # Exit 2 means re-run python notify function
 
-self_dir=$(dirname "$(realpath -s "$0")")
+self_dir=$(dirname "$0") 
 
 if which postfix > /dev/null
 then
@@ -21,7 +21,6 @@ then
                             service postfix stop >/dev/null
                             break ;;
             [Nn]|[Nn]o  ) 
-                            echo "Tradingbot server will not commence notification service. Run 'notify' command if you change your mind."
                             exit 1 ;;
             *|""        )
                             echo "Invalid response, please enter either 'y' or 'n'"
@@ -34,12 +33,12 @@ then
     sed -i -re 's/^smtp_tls_security_level=.*//g' /etc/postfix/main.cf
     name=$(hostname -f)
     domain=$(hostname -f | sed -r 's/[^\.]*\.//')
-    if grep -E -w "^myhostname =\s*${name}" /etc/postfix/main.cf > /dev/null
+    if grep -E -w -n "^myhostname =\s*${name}" /etc/postfix/main.cf 
     then :
     else
         sed -i -re "s/^(myhostname =).*/\1 ${name}/" /etc/postfix/main.cf 
     fi
-    if grep -E -w "^mydestination = localhost\.${domain}, , localhost" /etc/postfix/main.cf > /dev/null
+    if grep -E -w -n "^mydestination = localhost\.${domain}, , localhost" /etc/postfix/main.cf 
         then :
     else
         sed -i -re "s/^(mydestination =).*/\1 localhost.${domain}, , localhost/" /etc/postfix/main.cf
@@ -67,12 +66,11 @@ smtpd_use_tls=yes
 eof
     fi
     echo "Postfix configeration complete."
-    if ls /etc/postfix/sasl | grep -E 'sasl_passwd_tradingbot.db' >/dev/null
+    if ls /etc/postfix/sasl | grep -E -n 'sasl_passwd_tradingbot.db' 
     then
         gmail=$(grep -E '^notification gmail: ' "${self_dir}"/server_attributes/postfix.txt | sed -r 's/^notification gmail: //')
-        echo "Please ensure your gmail: ${gmail} has its 'Less secure app access' ON." # Note: Would normally use xdg-open, however this was built on WSL2 (could use wsl-open)
+        echo "Reminder, please ensure your gmail: ${gmail} has its 'Less secure app access' ON." # Note: Would normally use xdg-open, however this was built on WSL2 (could use wsl-open)
         echo "To check, follow the link: https://myaccount.google.com/lesssecureapps"
-        echo "Starting postfix server ... "
         service postfix restart >/dev/null
         exit 0
     else
@@ -112,10 +110,8 @@ eof
                                     echo "Use this link to change it: https://myaccount.google.com/lesssecureapps" 
                                     echo -n "Hit Enter once completed: "
                                     read line
-                                    echo "Trading server and postfix server setup completed. Notifications service will now commence!"
                                     exit 0 ;;
-                    [Nn]|[Nn]o  ) 
-                                    echo "Server notification setup will not commence. To retry, run 'notify' command again."
+                    [Nn]|[Nn]o  )     
                                     cat "${self_dir}"/server_attributes/postfix_main_original.cf > /etc/postfix/main.cf
                                     exit 1 ;;
                     *|""        )
@@ -144,8 +140,7 @@ else
                         cat /etc/postfix/main.cf > "${self_dir}"/server_attributes/postfix_main_original.cf
                         exit 2 ;;
         [Nn]|[Nn]o  ) 
-                        echo "No postfix will be installed. Tradingbot notification service will not be activated."
-                        echo "Run notification command to try again if desired."
+                        echo "No postfix will be installed."
                         exit 1 ;;
         *|""        )
                         echo "Invalid response, please enter either 'y' or 'n'"

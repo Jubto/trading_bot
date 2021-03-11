@@ -1,10 +1,14 @@
 #!/bin/sh
 
-self_dir=$(dirname "$(realpath -s "$0")") # Note, realpath is not POSIX however it's considered the most portable/ported, most likely the user will have it. 
+# Exit 0 means continue python notify function
+# Exit 1 means exit python notify function
 
-if grep -E 'Shutdown status: good' "${self_dir}"/server_attributes/shutdown_status.txt
-then :
-elif grep -E '###tradingbot modification applied###' /etc/postfix/main.cf
+self_dir=$(dirname "$0") # This will always be an absolute path because these scripts are run from notification_server.py 
+
+if grep -E -n 'Shutdown status: good' "${self_dir}"/server_attributes/shutdown_status.txt 
+then 
+    exit 0
+elif grep -E -n '###tradingbot modification applied###' /etc/postfix/main.cf
     then
         echo "WARNING: Tradingbot server did not shutdown safely using 'quit' command."
         echo "This has resulted in /etc/postfix/main.cf retaining the tradingbot server settings without getting reverted to it's prior settings."
@@ -49,7 +53,6 @@ elif grep -E '###tradingbot modification applied###' /etc/postfix/main.cf
                                 continue
                             fi ;;
             [Nn]|[Nn]o  )
-                            echo "Notifications for the server will not turn on until this issue is resolved."
                             exit 1 ;;
             *|""        )
                             echo "Invalid response, please enter either 'y' or 'n'"

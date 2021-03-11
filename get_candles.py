@@ -38,7 +38,7 @@ class Coin():
 		self.previous_update_UTC = None
 
 
-	def get_candles(self, tradingpair, *intervals):
+	def get_candles(self, tradingpair, intervals = []):
 		'''
 		Handles the retreval of raw candle data from binance.
 		If coin has no stored data (i.e. new coin for server) then this will retreve all historical data
