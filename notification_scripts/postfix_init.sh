@@ -6,6 +6,8 @@
 
 self_dir=$(dirname "$0") 
 
+trap 'cat "${self_dir}"/server_attributes/postfix_main_original.cf > /etc/postfix/main.cf;exit 1' INT TERM  # Revert postfix main.cf to original if abrupt end.
+
 if which postfix > /dev/null
 then
     cat /etc/postfix/main.cf > "${self_dir}"/server_attributes/postfix_main_original.cf
@@ -33,12 +35,12 @@ then
     sed -i -re 's/^smtp_tls_security_level=.*//g' /etc/postfix/main.cf
     name=$(hostname -f)
     domain=$(hostname -f | sed -r 's/[^\.]*\.//')
-    if grep -E -w -n "^myhostname =\s*${name}" /etc/postfix/main.cf 
+    if grep -E -w -q "^myhostname =\s*${name}" /etc/postfix/main.cf 
     then :
     else
         sed -i -re "s/^(myhostname =).*/\1 ${name}/" /etc/postfix/main.cf 
     fi
-    if grep -E -w -n "^mydestination = localhost\.${domain}, , localhost" /etc/postfix/main.cf 
+    if grep -E -w -q "^mydestination = localhost\.${domain}, , localhost" /etc/postfix/main.cf 
         then :
     else
         sed -i -re "s/^(mydestination =).*/\1 localhost.${domain}, , localhost/" /etc/postfix/main.cf
@@ -66,9 +68,9 @@ smtpd_use_tls=yes
 eof
     fi
     echo "Postfix configeration complete."
-    if ls /etc/postfix/sasl | grep -E -n 'sasl_passwd_tradingbot.db' 
+    if ls /etc/postfix/sasl | grep -E -q 'sasl_passwd_tradingbot.db'
     then
-        gmail=$(grep -E '^notification gmail: ' "${self_dir}"/server_attributes/postfix.txt | sed -r 's/^notification gmail: //')
+        gmail=$(grep -E '^SERVER OWNER gmail:' "${self_dir}"/server_attributes/postfix.txt | sed -r 's/^SERVER OWNER gmail://')
         echo "Reminder, please ensure your gmail: ${gmail} has its 'Less secure app access' ON." # Note: Would normally use xdg-open, however this was built on WSL2 (could use wsl-open)
         echo "To check, follow the link: https://myaccount.google.com/lesssecureapps"
         service postfix restart >/dev/null
@@ -102,7 +104,7 @@ eof
                                     chown root:root /etc/postfix/sasl/sasl_passwd_tradingbot.db
                                     chmod 600 /etc/postfix/sasl/sasl_passwd_tradingbot.db
                                     rm /etc/postfix/sasl/sasl_passwd_tradingbot
-                                    echo "notification gmail: ${email}" | cat >> "${self_dir}"/server_attributes/postfix.txt
+                                    echo "SERVER OWNER gmail:${email}" | cat >> "${self_dir}"/server_attributes/postfix.txt
                                     echo "Password has been hashed."
                                     echo "Postfix server will restart..."
                                     service postfix restart >/dev/null

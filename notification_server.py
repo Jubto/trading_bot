@@ -2,7 +2,6 @@ from threading import Thread, Event, enumerate as list_threads
 from get_candles import Coin # Self made
 from glob import glob
 import subprocess
-import socket
 import time
 import json 
 import sys
@@ -20,14 +19,16 @@ class Notification_server():
     Enter 'commands' to view all avaliable server commands  
     '''
 
-    PORT = 13337 
-    IP_ADDRESS = socket.gethostbyname(socket.gethostname())
     SERVER_SPEED = 5 # Deafult server tick speed 5 seconds.
     REQUEST_INTERVAL = 60 # Deafult server Binance candle request interval.
-    SERVER_USERS = {'admin':{}, 'user':{}} # Dict keeping track of server users and their respective coins. 
+    SERVER_USERS = {} # Dict keeping track of server users and their attributes (coins, update_intervals, thresholds, previlages). 
     MONITORED_COINS = {} # Dict of coins server is currently monitoring. 
     MESSAGE_BACKLOG = [] # List of messages for server_stdout() to process in order. 
     OUTGOING_MESSAGES = {} # Dict of messages from all users which get seqentially delivered to each respective user email
+    BULL_THRESHOLD = 25 # Deafult thresholds before notification sent. Each user can set their own threshold under their attributes. (eventually implement ML)
+    BEAR_THRESHOLD = 25 # Eventually will make both of these dicts with keys as coins, value as threshold.
+    MODE_1_MESSAGES = {} # Dict to store mode 1 (signal) like messages for server_user thread to read/send.
+    MODE_2_MESSAGES = {} # Dict to store mode 2 (update) like messages for server_user thread to read/send.
     SERVER_COMMANDS = ['commands', 'monitor', 'all', 'now', 'drop', 'monitoring', 'request_interval', 'quit', 'stdout', 'server_speed', 'notify', 'debug', 'post']
     SERVER_INSTRUCTION = {'drop': '', "stdout": 0, 'request_interval': [], 'pause': 0, 'boost': 0, 'post':0}
 
@@ -42,8 +43,9 @@ class Notification_server():
         self.script_path = self.root_path + '/notification_scripts'
         self.attribute_path = self.script_path + '/server_attributes'
         self.postfix_init = False
+        self.server_owner_gmail = ''
         if not os.path.exists(self.data_path):
-            os.mkdir(self.data_path)
+            os.mkdir(self.data_path) # This acts like a database to store all users coins and anaylsis.
         self.server_welcome()
 
         if coin_symbols:
@@ -55,7 +57,6 @@ class Notification_server():
         Thread(target=self.request_interval_handler, name='server_intervals', daemon=True).start() # Global server timer for sending candle requests.
         Thread(target=self.server_stdout, name='server_stdout', daemon=True).start() # Handles smooth server stdout. 
         Thread(target=self.server_user_stdinput, name='server_input', daemon=True).start() # Ready server to intake user inputs
-        Thread(target=self.server_listen, name='server_listen', daemon=True).start() # Ready server to receive HTTP requests from client (i.e. trading_bot webpage)
 
 
     def server_welcome(self):
@@ -80,7 +81,7 @@ class Notification_server():
         print(f'<stdout>: Toggles server stdout between periodic and OFF - server starts off in OFF state.')
         print(f'<server_speed>: Allows user to modify server tick speed.')
         print(f'<request_interval>: Allows user to modify server communication interval with Binance for candle retreival (deafult 1 minute).')
-        print(f'<notify>: Allows user to modify the bull/bear score threshold required for server to notify user.')
+        print(f'<notify>: Starts up the server notification mailing service. If first time, this will start the initialisation process.')
         print(f'<quit>: Shuts down server activity.')
         print('='*130 + '\n')
 
@@ -111,7 +112,6 @@ class Notification_server():
                 elif user_input == 'drop':
                     self.input_drop_coin()
                 elif user_input == 'notify':
-                    self.notification_settings()
                     self.notification_init()
                 elif user_input == 'debug':
                     print(f'Server instruction settings are:\n{self.SERVER_INSTRUCTION}')
@@ -212,9 +212,12 @@ class Notification_server():
                 coin_score = coin.current_score(monitoring=symbol_timeframes) # Retreve coin score and analysis summary. 
                 if re.search(coin_symbol, str(self.SERVER_INSTRUCTION['drop'])):
                     continue # Situation where user inputs drop just before server sends out data.
-                self.server_push(coin_score) # Sends data to webpage.
                 if len(self.MESSAGE_BACKLOG) < len(self.MONITORED_COINS):
                     self.MESSAGE_BACKLOG.append(coin_score) # Send data to stdout method. 
+                if coin_score[1] >= self.BULL_THRESHOLD:
+                    self.MODE_1_MESSAGES[coin_symbol] = f'BULL_{self.BULL_THRESHOLD}'
+                if coin_score[2] >= self.BEAR_THRESHOLD:
+                    self.MODE_1_MESSAGES[coin_symbol] = f'BEAR_{self.BEAR_THRESHOLD}'
                 #TODO Add a file option. I think having a file which re-writes itself with the latest score will be easier to work with, and turn of stdout Be like coin.to_csv() 
 
 
@@ -275,8 +278,8 @@ class Notification_server():
         '''Thread server speed, every SERVER_SPEED time elapsed will release the tickspeed_handler object'''
         
         while True:
-            self.tickspeed_handler.set() # Releases the event object for all active threads from waiting.
-            time.sleep(self.SERVER_SPEED / 10) # Just a simple measure to ensure all threads get released, not worth being more sophisticated. 
+            self.tickspeed_handler.set() # Releases the event object for all active threads from waiting. 
+            self.tickspeed_handler.wait() # Just a small measure to ensure all server .wait() methods are reached.
             self.tickspeed_handler.clear() # Locks server wide event object. 
             time.sleep(self.SERVER_SPEED)
 
@@ -284,13 +287,14 @@ class Notification_server():
     def server_stdout(self):
         '''Thread handles server stdout (so that thread stdouts don't overlap)'''
 
+        messages = []
         while True:
             self.tickspeed_handler.wait() # Releases every server tick.
             if len(self.MESSAGE_BACKLOG) >= len(self.MONITORED_COINS):
                 messages = self.MESSAGE_BACKLOG.copy()
                 self.MESSAGE_BACKLOG = [] # Empty message log.
                 if self.SERVER_INSTRUCTION['stdout']:
-                    self.SERVER_INSTRUCTION['post'] = 1
+                    self.SERVER_INSTRUCTION['post'] = 1 # Note, post can be turned on via user input also. 
 
             if self.SERVER_INSTRUCTION['post']:
                 while True:
@@ -538,52 +542,81 @@ class Notification_server():
                 print(f'Invalid characters used in {string}.')
                 return 1
 
-    def server_listen(self):
-        '''Listens for any request via server IP/PORT.'''
-
-        #TODO move this to web_server.py
-
-        # bind socket etc. This method thread would only be used if you have this server actually running a web page, and from the browser CLIENT (i.e the client
-        # is already made for you) this method will capture and interpret the HTTP requests and process them appropriately, Via the webpage we will make using HTML/Javascript
-        pass
-
-    def server_push(self, data):
-        '''Sends push request to webpage with new data'''
-        #TODO move this to web_server.py
-        pass
 
     def graph_historical_score(self):
         '''Handles the analysis of all historical data to generate a comprehensive graph'''
 
         pass
 
-    
 
-    def server_user(self, gmail, username):
-        '''Each thread will handle one user. Each thread can create two types of messages to be sent to the user via email.
+    def server_user_attributes(self, coins):
+        '''Handles adding attributes to the SERVER_USERS global variable'''
 
-        Type 1 are periodic update messages (which can be toggled off). These messages contain score, metrics, summaries and graphs.
+        #TODO potentially make a user class, with these methods, and attributes, in a seperate file - maybe 
 
-        Type 2 are signalling messages, when one of the users coins have passed a certain threshold
+        pass
+
+
+    def server_user(self, gmail, username, owner=False):
+        '''Creates user. Each thread will handles one user. Each thread can create two modes of messages to be sent to the user via email.
+
+        Mode 0 are periodic update messages (which can be toggled off). These messages contain score, metrics, summaries and graphs.
+
+        Mode 1 are signalling messages, when one of the users coins have passed a certain threshold
         
         '''
-        message_count = 0
-        while True:
 
-            # Each message is a dictionary
-            # Append dictionary to global list self.OUTGOING_MESSAGES
-            message_count += 1
-            message = {'user':'', 'mode':0, 'score':0, 'details':0, 'files':[]}
-            self.OUTGOING_MESSAGES['username' + message_count] = message
-            # TODO possibly add thread ID?
+        if owner:
+            self.SERVER_USERS[gmail] = {'username':username, 'gmail':gmail, 'privilege': 'admin', 'coins':[], 'threshold':'ML', 'update_interval': 1}
+        else:
+            self.SERVER_USERS[gmail] = {'username':username, 'gmail':gmail, 'privilege': 'user', 'coins':[], 'threshold':'ML', 'update_interval': 1}
+
+        Thread(target=self.server_user_mode_2_message_handler, name='server_user_mode_2_message_handler', args=(self.SERVER_USERS[gmail],), daemon=True).start()
+
+        while True:
+            try:
+                # Checks for any signals (due to a coin passing their threshold)
+                if self.MODE_1_MESSAGES:
+                    coins = self.MODE_1_MESSAGES.copy()
+                    for coin in coins:
+                        score = coins[coin].split('_')[-1]
+                        user_thresold = self.SERVER_USERS[gmail]['threshold']
+                        if coin in self.SERVER_USERS[gmail]['coins'] and (user_thresold == 'ML' or score >= user_thresold):
+                            subject = "coin X has passed threashold!"
+                            message = {'user':username, 'mode':'1', 'score':'0', 'title':subject, 'details':'0', 'files':''}
+                            self.OUTGOING_MESSAGES[username] = message # Send email
+                            self.MODE_1_MESSAGES.pop(coin) # TODO delete this properly via another helper function
+            except KeyError:
+                pass # This is the rare case where another server_user thread just finished deleting a key from MODE_1_MESSAGE while this thread tries to access it.
+            
+            try:
+                message = self.MODE_2_MESSAGES[gmail]
+                self.OUTGOING_MESSAGES[username] = message
+            except KeyError:
+                pass
+            
+            self.tickspeed_handler.wait()
+
             # once every interval (e.g. 1 hour) each user thread will append a row to template_outgoing one by one
 
+    def server_user_mode_2_message_handler(self, user_dict={}):
+        '''Each user has a thread of this which waits for their specific update_interval before sending a mode 2 message'''
 
+        # Thread will send mode 2 message upon creation, and then wait for update_interval time to send next one. 
+        while True:
+            self.tickspeed_handler.wait()
+            subject = "This is a periodic update message for X"
+            username = user_dict['username']
+            message = {'user':username, 'mode':'2', 'score':'0', 'title':subject, 'details':'0', 'files':''}
+            self.MODE_2_MESSAGES[user_dict['gmail']] = message
+            update_message_timer = user_dict['update_interval'] * 3600 # seconds.
+            time.sleep(update_message_timer) # If user decides to increase this frequency, destroy the thread and create new one
 
 
     def recieve_mail_instructions(self):
         '''Thread which handles listening for emails from server users'''
         # Ideally waits in while loop, checking incoming mail each time (which come from script, generates new file for each mail)
+        # Once this checks the file, it deletes it (clearing inbox)
         # This will read the incoming.txt (where the received instructions are) and make/modify each outgoing.txt which then gets picked up by notification_send_gmail
 
         while self.postfix_init:
@@ -594,10 +627,12 @@ class Notification_server():
             # drop: Requires user + coin/tradingpair
             # monitor: requires user + coins etc.
             # update: requires interval
-            # Silence: 
+            # Silence: Stops server from sending mode 2 messages
+            # request_coin: non-admin users can request a coin, which the server will store and present to the owner 
 
         # Make all mail that gets sent to owner email get stored in a file, then this method will periodically check it for new instructions and perform them
         # Instructions like: Add new user, monitor new coin, drop coin, send update, change notification etc. 
+
 
     def notification_settings(self):
         '''By deafult, server will determine the notification sensistivity based on the historical graph, this method handles the modulation of this sensititity'''
@@ -608,20 +643,26 @@ class Notification_server():
         else:
             print(f'Please run the "notify" command before trying to modify notifcation settings')
 
+
     def notification_send_gmail(self):
         '''Thread which handles sending emails to server users'''
 
+        # Test data
+        self.OUTGOING_MESSAGES['kentocroft@gmail.com'] = {'user':'kentocroft@gmail.com', 'mode':'0', 'score':'59', 'details':'blahh', 'files':'file1,file2,file3'}
+        self.OUTGOING_MESSAGES['jubjubfriend@gmail.com'] = {'user':'jubjubfriend@gmail.com', 'mode':'1', 'score':'1', 'details':'0', 'files':'file1,file2'}
         while self.postfix_init:
             while self.OUTGOING_MESSAGES:
                 to_send = self.OUTGOING_MESSAGES.copy()
+                print(f'self.OUTGOING_MESSAGES is: {self.OUTGOING_MESSAGES}')
+                self.tickspeed_handler.wait()
                 for user in to_send:
                     self.OUTGOING_MESSAGES.pop(user)
                     message = to_send[user]
-                    sendmail_process = subprocess.run([self.script_path + '/sendmail.sh', message['user'], message['mode'], ...])
+                    sendmail_process = subprocess.run([self.script_path + '/send_mail.sh', *[message[header] for header in message]])
                     if sendmail_process.returncode == 0:
                         continue
                     else:
-                        print("Error message not sent.")
+                        print(f'Error: message for {user} did not send, script returned exit {sendmail_process.returncode}.')
             self.tickspeed_handler.wait()
 
             # Checks outgoing file - which will either be empty, or contain users (with message IDs). Each user will have written the mode, score, and file names to send
@@ -636,6 +677,7 @@ class Notification_server():
         # Have a admin users, which have the power to delete from database and add a new coin to database.
         # Each user can tune into their own set of coins, or drop coins relative to them, monitor present coins relative to them
 
+
     def notification_init(self):
         '''Handles postfix initiation and SMTP communication with user gmail'''
 
@@ -648,6 +690,11 @@ class Notification_server():
                     if postfix_init_process.returncode == 0:
                         print("Postfix server setup completed. Notifications service will now commence!")
                         self.postfix_init = True
+                        with open(self.attribute_path + '/postfix.txt') as users:
+                            self.server_owner_gmail = users.readline().split(':')[-1]
+                            username = self.server_owner_gmail.split('@')[0]
+                            owner = True
+                        Thread(target=self.server_user, name='server_user',args=(self.server_owner_gmail, username, owner), daemon=True).start() 
                         Thread(target=self.notification_send_gmail, name='notification_send_gmail', daemon=True).start()
                         Thread(target=self.recieve_mail_instructions, name='recieve_mail_instructions', daemon=True).start()
                         break 
@@ -680,9 +727,13 @@ class Notification_server():
 
     def debug(self):
         '''Helper method which returns all coin threads currently running on the server'''
+
         print('\nServer is currently running the following threads:\n')
         [print('Thread: ' + str(thread).split(',')[0].split('(')[1]) for thread in list_threads()]
         print(f'\nServer instructions are set as: \n{self.SERVER_INSTRUCTION}')
+        print(f'Server tick speed: {self.SERVER_SPEED}')
+        print(f'Server interval speed: {self.REQUEST_INTERVAL}')
+
 
     def shutdown_server(self):
         '''When keyword >quit< is receieved, server will shutdown'''
@@ -693,6 +744,7 @@ class Notification_server():
             self.server_shutdown.set() # Set event object flag as ON.
         else:
             print('WARNING: server shutdown process was NOT sucessful. Please wait for the admin.')
+
 
 if __name__ == '__main__':
     # Server can be started with <python3 notification_server.py>

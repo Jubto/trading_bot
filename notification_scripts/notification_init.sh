@@ -5,10 +5,10 @@
 
 self_dir=$(dirname "$0") # This will always be an absolute path because these scripts are run from notification_server.py 
 
-if grep -E -n 'Shutdown status: good' "${self_dir}"/server_attributes/shutdown_status.txt 
+if grep -E -q 'Shutdown status: good' "${self_dir}"/server_attributes/shutdown_status.txt 
 then 
     exit 0
-elif grep -E -n '###tradingbot modification applied###' /etc/postfix/main.cf
+elif grep -E -q '###tradingbot modification applied###' /etc/postfix/main.cf
     then
         echo "WARNING: Tradingbot server did not shutdown safely using 'quit' command."
         echo "This has resulted in /etc/postfix/main.cf retaining the tradingbot server settings without getting reverted to it's prior settings."

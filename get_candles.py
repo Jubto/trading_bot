@@ -341,7 +341,7 @@ class Coin():
 				tradingpairs.add(tradingpair)
 			for tradingpair in tradingpairs:
 				stored_timeframes = self.get_timeframes(self.coin_symbol + tradingpair)
-				self.get_candles(tradingpair, *stored_timeframes)
+				self.get_candles(tradingpair, intervals=stored_timeframes)
 			self.add_data_to_json() # Adds latests candle data to json 
 
 
