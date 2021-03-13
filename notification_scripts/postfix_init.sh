@@ -70,7 +70,7 @@ eof
     echo "Postfix configeration complete."
     if ls /etc/postfix/sasl | grep -E -q 'sasl_passwd_tradingbot.db'
     then
-        gmail=$(grep -E '^SERVER OWNER gmail:' "${self_dir}"/server_attributes/postfix.txt | sed -r 's/^SERVER OWNER gmail://')
+        gmail=$(grep -E '^SERVER OWNER gmail:' "${self_dir}"/server_attributes/postfix.txt | sed -r 's/^SERVER OWNER gmail:([^:]*):.*/\1/')
         echo "Reminder, please ensure your gmail: ${gmail} has its 'Less secure app access' ON." # Note: Would normally use xdg-open, however this was built on WSL2 (could use wsl-open)
         echo "To check, follow the link: https://myaccount.google.com/lesssecureapps"
         service postfix restart >/dev/null
@@ -104,7 +104,12 @@ eof
                                     chown root:root /etc/postfix/sasl/sasl_passwd_tradingbot.db
                                     chmod 600 /etc/postfix/sasl/sasl_passwd_tradingbot.db
                                     rm /etc/postfix/sasl/sasl_passwd_tradingbot
-                                    echo "SERVER OWNER gmail:${email}" | cat >> "${self_dir}"/server_attributes/postfix.txt
+                                    if test -e "${self_dir}"/server_attributes/postfix.txt
+                                    then
+                                        sed -i -re "s/^(SERVER OWNER gmail:)[^:]*(:.*)/\1"${email}"\2/" "${self_dir}"/server_attributes/postfix.txt
+                                    else
+                                        echo "SERVER OWNER gmail:${email}:${email}" | cat > "${self_dir}"/server_attributes/postfix.txt
+                                    fi
                                     echo "Password has been hashed."
                                     echo "Postfix server will restart..."
                                     service postfix restart >/dev/null
@@ -112,7 +117,30 @@ eof
                                     echo "Use this link to change it: https://myaccount.google.com/lesssecureapps" 
                                     echo -n "Hit Enter once completed: "
                                     read line
-                                    exit 0 ;;
+                                    echo -n "Finally, would you like the notifications to be sent to ${email}, or a different email? (same/diff): "
+                                    while read response
+                                    do
+                                        case "$response" in
+                                        diff        )
+                                                    while true
+                                                    do
+                                                        echo -n "Enter email to send to:"
+                                                        read email
+                                                        case "$email" in
+                                                        *@*   )
+                                                                sed -i -re "s/^(SERVER OWNER gmail:[^:]*:).*/\1"$email"/" "${self_dir}"/server_attributes/postfix.txt
+                                                                break ;;
+                                                        *   )
+                                                                continue
+                                                        esac
+                                                    done
+                                                    exit 0 ;;
+                                        same        )
+                                                    exit 0 ;;
+                                        *|""        )
+                                                    echo -n "Would you like the notifications to be sent to ${email}, or a different email? (same/diff): "
+                                        esac
+                                    done < /dev/stdin ;;
                     [Nn]|[Nn]o  )     
                                     cat "${self_dir}"/server_attributes/postfix_main_original.cf > /etc/postfix/main.cf
                                     exit 1 ;;

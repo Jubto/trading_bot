@@ -42,7 +42,7 @@ elif grep -E -q '###tradingbot modification applied###' /etc/postfix/main.cf
             [Yy]|[Yy]es )
                             echo -n "Provide file path to alternative version of main.cf:"
                             read path
-                            if ls -- "$path" >/dev/null 2>&1
+                            if test -e "$path"
                             then 
                                 cat "$path" > "${self_dir}"/server_attributes/postfix_main_original.cf
                                 echo "Server process will continue as normal."

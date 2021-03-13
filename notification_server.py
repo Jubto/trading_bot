@@ -29,6 +29,7 @@ class Notification_server():
     BEAR_THRESHOLD = 25 # Eventually will make both of these dicts with keys as coins, value as threshold.
     MODE_1_MESSAGES = {} # Dict to store mode 1 (signal) like messages for server_user thread to read/send.
     MODE_2_MESSAGES = {} # Dict to store mode 2 (update) like messages for server_user thread to read/send.
+    MODE_2_REQUEST = 0 # Whenever a user thread requires a new update, this will handle that.
     SERVER_COMMANDS = ['commands', 'monitor', 'all', 'now', 'drop', 'monitoring', 'request_interval', 'quit', 'stdout', 'server_speed', 'notify', 'debug', 'post']
     SERVER_INSTRUCTION = {'drop': '', "stdout": 0, 'request_interval': [], 'pause': 0, 'boost': 0, 'post':0}
 
@@ -180,6 +181,8 @@ class Notification_server():
 
         coin = Coin(coin_symbol) # Create coin object.
         trim = len(coin_symbol)
+        previous_bull_score = 0
+        previous_bear_score = 0
         while True:
             self.tickspeed_handler.wait() # Releases every server tick.
 
@@ -210,16 +213,27 @@ class Notification_server():
                 self.SERVER_INSTRUCTION['request_interval'].remove(coin_symbol) # Let's request_interval thread know which coins have started scoring.
                 symbol_timeframes = self.MONITORED_COINS[coin_symbol] # Only monitor specified tradingpairs.
                 coin_score = coin.current_score(monitoring=symbol_timeframes) # Retreve coin score and analysis summary. 
+                bull_score = coin_score[1]
+                bear_score = coin_score[2]
+
                 if re.search(coin_symbol, str(self.SERVER_INSTRUCTION['drop'])):
-                    continue # Situation where user inputs drop just before server sends out data.
+                    continue # If user just entered coin to drop when score already processed.
                 if len(self.MESSAGE_BACKLOG) < len(self.MONITORED_COINS):
                     self.MESSAGE_BACKLOG.append(coin_score) # Send data to stdout method. 
-                if coin_score[1] >= self.BULL_THRESHOLD:
-                    self.MODE_1_MESSAGES[coin_symbol] = f'BULL_{self.BULL_THRESHOLD}'
-                if coin_score[2] >= self.BEAR_THRESHOLD:
-                    self.MODE_1_MESSAGES[coin_symbol] = f'BEAR_{self.BEAR_THRESHOLD}'
-                #TODO Add a file option. I think having a file which re-writes itself with the latest score will be easier to work with, and turn of stdout Be like coin.to_csv() 
 
+                if bull_score > previous_bull_score:
+                    if coin_score[1] >= self.BULL_THRESHOLD:
+                        coin.generate_result_files(mode='signal') # Generate/replace signal graph/csv files in server_mail/outgoing for users to send
+                        self.MODE_1_MESSAGES[coin_symbol] = f'BULL_{self.BULL_THRESHOLD}' # Send message to all users subscribed to this coin
+                elif bear_score > previous_bear_score:
+                    if coin_score[2] >= self.BEAR_THRESHOLD:
+                        coin.generate_result_files(mode='signal')
+                        self.MODE_1_MESSAGES[coin_symbol] = f'BEAR_{self.BEAR_THRESHOLD}' 
+
+                if self.MODE_2_REQUEST:
+                    coin.generate_result_files(mode='update')
+                    self.MODE_2_REQUEST -= 1 # Once the value becomes zero, any user thread which is ready will send a mode 2 email.
+                    print(f'MODE_2_REQUEST is now: {self.MODE_2_REQUEST}')
 
     def current_monitoring(self):
         '''Returns list of coins, trading pairs and timeframes server is currently monitoring'''
@@ -229,6 +243,7 @@ class Notification_server():
             print(f'\ncoin {coin}:')
             for pair in self.MONITORED_COINS[coin]:
                 print(pair)
+        print('\n')
 
     def current_monitoring_list(self):
         '''Returns list of all pairs monitored and stored in the database'''
@@ -550,14 +565,14 @@ class Notification_server():
 
 
     def server_user_attributes(self, coins):
-        '''Handles adding attributes to the SERVER_USERS global variable'''
+        '''Handles adding or removing attributes to the SERVER_USERS global variable'''
 
         #TODO potentially make a user class, with these methods, and attributes, in a seperate file - maybe 
 
         pass
 
 
-    def server_user(self, gmail, username, owner=False):
+    def server_user(self, gmail, owner=False):
         '''Creates user. Each thread will handles one user. Each thread can create two modes of messages to be sent to the user via email.
 
         Mode 0 are periodic update messages (which can be toggled off). These messages contain score, metrics, summaries and graphs.
@@ -565,13 +580,14 @@ class Notification_server():
         Mode 1 are signalling messages, when one of the users coins have passed a certain threshold
         
         '''
-
+        username = gmail.split('@')[0]
         if owner:
-            self.SERVER_USERS[gmail] = {'username':username, 'gmail':gmail, 'privilege': 'admin', 'coins':[], 'threshold':'ML', 'update_interval': 1}
+            coins = list(self.MONITORED_COINS.keys())
+            self.SERVER_USERS[gmail] = {'username':username, 'gmail':gmail, 'privilege': 'admin', 'coins':coins, 'threshold':'ML', 'update_interval': 1}
         else:
             self.SERVER_USERS[gmail] = {'username':username, 'gmail':gmail, 'privilege': 'user', 'coins':[], 'threshold':'ML', 'update_interval': 1}
 
-        Thread(target=self.server_user_mode_2_message_handler, name='server_user_mode_2_message_handler', args=(self.SERVER_USERS[gmail],), daemon=True).start()
+        Thread(target=self.server_user_mode_2_message_handler, name=f'server_user_message_handler_{username}', args=(self.SERVER_USERS[gmail],), daemon=True).start()
 
         while True:
             try:
@@ -580,10 +596,14 @@ class Notification_server():
                     coins = self.MODE_1_MESSAGES.copy()
                     for coin in coins:
                         score = coins[coin].split('_')[-1]
+                        mood = coins[coin].split('_')[0]
                         user_thresold = self.SERVER_USERS[gmail]['threshold']
                         if coin in self.SERVER_USERS[gmail]['coins'] and (user_thresold == 'ML' or score >= user_thresold):
-                            subject = "coin X has passed threashold!"
-                            message = {'user':username, 'mode':'1', 'score':'0', 'title':subject, 'details':'0', 'files':''}
+                            subject = f'SIGNAL ALERT: {coin} passed {mood}ish threshold!'
+                            details = (f'{subject} SCORE: {score}#These events are rare and usually a good time to perform a swing trade.#'
+                                        'The summary excel and historical score vs performance graphs have been attached to assist in your descision.')
+                            files = ','.join(glob(self.root_path + f'/server_mail/outgoing/{coin}_SIGNAL*'))
+                            message = {'user':gmail, 'title':subject, 'details':details, 'files':files}
                             self.OUTGOING_MESSAGES[username] = message # Send email
                             self.MODE_1_MESSAGES.pop(coin) # TODO delete this properly via another helper function
             except KeyError:
@@ -591,31 +611,42 @@ class Notification_server():
             
             try:
                 message = self.MODE_2_MESSAGES[gmail]
-                self.OUTGOING_MESSAGES[username] = message
+                self.OUTGOING_MESSAGES[gmail] = message
+                self.MODE_2_MESSAGES.pop(gmail)
             except KeyError:
                 pass
             
             self.tickspeed_handler.wait()
 
-            # once every interval (e.g. 1 hour) each user thread will append a row to template_outgoing one by one
 
     def server_user_mode_2_message_handler(self, user_dict={}):
         '''Each user has a thread of this which waits for their specific update_interval before sending a mode 2 message'''
 
         # Thread will send mode 2 message upon creation, and then wait for update_interval time to send next one. 
         while True:
-            self.tickspeed_handler.wait()
-            subject = "This is a periodic update message for X"
-            username = user_dict['username']
-            message = {'user':username, 'mode':'2', 'score':'0', 'title':subject, 'details':'0', 'files':''}
-            self.MODE_2_MESSAGES[user_dict['gmail']] = message
+            self.MODE_2_REQUEST = len(self.MONITORED_COINS)
+            print(f'MODE_2_REQUEST is: {self.MODE_2_REQUEST}')
+            while self.MODE_2_REQUEST:
+                self.tickspeed_handler.wait()
             update_message_timer = user_dict['update_interval'] * 3600 # seconds.
+            gmail = user_dict['gmail']
+            coins = user_dict['coins']
+            subject = f'UPDATE for coins {coins}'
+            details = (f'This is a periodic update email containing csv and graph data on your monitored coins.#'
+                        f'Your coins are: {coins}#'
+                        f'The next update will send in {update_message_timer/3600} hours.#'
+                        'To scilence this type of message, email this address the command "silence".#' 
+                        'To modify how often this type of message sends, email this address "update-X"')
+            files = ','.join([','.join(file_group) for file_group in [glob(self.root_path + f'/server_mail/outgoing/{coin}_UPDATE*') for coin in coins] if file_group != []])
+            message = {'user':gmail, 'title':subject, 'details':details, 'files':files}
+            self.MODE_2_MESSAGES[gmail] = message
+            
             time.sleep(update_message_timer) # If user decides to increase this frequency, destroy the thread and create new one
 
 
     def recieve_mail_instructions(self):
         '''Thread which handles listening for emails from server users'''
-        # Ideally waits in while loop, checking incoming mail each time (which come from script, generates new file for each mail)
+        # Ideally waits in while loop, checking incoming mail each time (which come from script, generates new file for each mail) - by running recevie_mail.sh 
         # Once this checks the file, it deletes it (clearing inbox)
         # This will read the incoming.txt (where the received instructions are) and make/modify each outgoing.txt which then gets picked up by notification_send_gmail
 
@@ -647,9 +678,6 @@ class Notification_server():
     def notification_send_gmail(self):
         '''Thread which handles sending emails to server users'''
 
-        # Test data
-        self.OUTGOING_MESSAGES['kentocroft@gmail.com'] = {'user':'kentocroft@gmail.com', 'mode':'0', 'score':'59', 'details':'blahh', 'files':'file1,file2,file3'}
-        self.OUTGOING_MESSAGES['jubjubfriend@gmail.com'] = {'user':'jubjubfriend@gmail.com', 'mode':'1', 'score':'1', 'details':'0', 'files':'file1,file2'}
         while self.postfix_init:
             while self.OUTGOING_MESSAGES:
                 to_send = self.OUTGOING_MESSAGES.copy()
@@ -690,11 +718,12 @@ class Notification_server():
                     if postfix_init_process.returncode == 0:
                         print("Postfix server setup completed. Notifications service will now commence!")
                         self.postfix_init = True
+                        owner = True
                         with open(self.attribute_path + '/postfix.txt') as users:
-                            self.server_owner_gmail = users.readline().split(':')[-1]
-                            username = self.server_owner_gmail.split('@')[0]
-                            owner = True
-                        Thread(target=self.server_user, name='server_user',args=(self.server_owner_gmail, username, owner), daemon=True).start() 
+                            first_line = users.readline()
+                            self.server_owner_gmail = first_line.split(':')[1]
+                            gmail = first_line.split(':')[-1][:-1]
+                        Thread(target=self.server_user, name='server_user_owner',args=(gmail, owner), daemon=True).start() 
                         Thread(target=self.notification_send_gmail, name='notification_send_gmail', daemon=True).start()
                         Thread(target=self.recieve_mail_instructions, name='recieve_mail_instructions', daemon=True).start()
                         break 
@@ -744,6 +773,8 @@ class Notification_server():
             self.server_shutdown.set() # Set event object flag as ON.
         else:
             print('WARNING: server shutdown process was NOT sucessful. Please wait for the admin.')
+        
+        #TODO remove all incoming/outgoing files
 
 
 if __name__ == '__main__':

@@ -1,7 +1,8 @@
 
 
 ###############
-# TODO Work will commence on this after MAY 2021
+# TODO Work will commence on this after MAY 2021 
+# RESTful server 
 # Currently focused on notification_server.py, get_candles.py, and notification_scripts
 ###############
 

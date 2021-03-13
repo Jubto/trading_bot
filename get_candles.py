@@ -288,7 +288,6 @@ class Coin():
 		with open(self.json_file, 'r') as jf:
 			coin_data = json.load(jf)
 
-		to_remove = {} # Store list of keys to remove if json file is not up to date to stored csvfiles. 
 		for symbol in coin_data:
 			for timeframe in coin_data[symbol]:
 				datafile = self.csv_filename(symbol.split(self.coin_symbol)[1], timeframe)
@@ -497,6 +496,15 @@ class Coin():
 		return [f'{self.coin_symbol}', score_bull, score_bear, score_dict, 'coin_score']
 		
 
+	def generate_result_files(self, mode):
+		self.generate_summary_csv(mode)
+		self.graph_historical_data(mode)
+
+
+	def generate_summary_csv(self, mode):
+		pass
+
+	
 	def historical_score(self):
 		#TODO: This will be a fairly complex method. 
 		#Tasks: obtain 5min candle data to store ONLY as csv. Use each 5min row data as input into the historical_score method. Each row acts like real time measurments back in time.
@@ -515,9 +523,12 @@ class Coin():
 		# so the new json will NOT contain 5min tf, but will contain 1h etc. and grow from size 0 up to the latest version, but each time it grows you do all these things.  
 
 		# later on, I want to see if I can add other exchanges which have older data, maybe like bitrex
+
+		#TODO I think I will make two kinds of csvs - one for presentation (i.e. for emailing) and one for computation (i.e. scoring)
+		# The scoring csvs will be loaded into pandas df -> anaylsis -> then using pandas plotting for the graphing 
 		pass
 
-	def graph_historical_data(self):
+	def graph_historical_data(self, mode):
 		# Take notes from project-falcon
 		# Perhaps make a class dedicated to graphing
 		pass 
