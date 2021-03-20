@@ -19,7 +19,8 @@ class Coin():
 	'''A class which retrieves candle stick data for a given coin avaliable on Binance, performs TA on the stored data, can return a score.'''
 
 	# All avaliable intervals on binance
-	INTERVALS = {'1m':15, '3m':14, '5m':13, '15m':12, '30m':11, '1h':10, '2h':9, '3h':8, '4h':7, '6h':6, '8h':5, '12h':4, '1d':3, '3d':2, '1w':1, '1M':0} 
+	# INTERVALS = {'1m':15, '3m':14, '5m':13, '15m':12, '30m':11, '1h':10, '2h':9, '3h':8, '4h':7, '6h':6, '8h':5, '12h':4, '1d':3, '3d':2, '1w':1, '1M':0} 
+	INTERVALS = {'1m':'p', '3m':'o', '5m':'n', '15m':'m', '30m':'l', '1h':'k', '2h':'j', '3h':'i', '4h':'h', '6h':'g', '8h':'f', '12h':'e', '1d':'d', '3d':'c', '1w':'b', '1M':'a'}
 	EARLIEST_DATE = "1 Jan, 2017" # Date binance started
 
 	def __init__(self, coin_symbol, coin_name=None):		
@@ -477,14 +478,14 @@ class Coin():
 					# This means the current candle performed in the top 20% or above of all historical candles (i.e. bull - sell)
 					if performance <= 20:
 						if performance <=5:
-							score_dict[symbol][timeframe][data] = "Rank is: " + str(performance) + '!!!' + f' | change is: {change}%' + f' | average is: {average}%' 
+							score_dict[symbol][timeframe][data] = "Rank is: " + str(performance) + f' | change is: {change}%' + f' | average is: {average}%' 
 						else:
 							score_dict[symbol][timeframe][data] = "Rank is: " + str(performance) + f' | change is: {change}%' + f' | average is: {average}%' 
 
 					# This means the current candle performed in the bottom 80% or bellow all historical candles (i.e. bear - buy)
 					elif performance >= 80 and data not in ['candle_max_up', 'candle_max_down']:
 						if performance >=95:
-							score_dict[symbol][timeframe][data] = "Rank is: " + str(performance) + '!!!' + f' | change is: {change}%' + f' | average is: {average}%' 
+							score_dict[symbol][timeframe][data] = "Rank is: " + str(performance) + f' | change is: {change}%' + f' | average is: {average}%' 
 						else:
 							score_dict[symbol][timeframe][data] = "Rank is: " + str(performance) + f' | change is: {change}%' + f' | average is: {average}%' 
 					else:

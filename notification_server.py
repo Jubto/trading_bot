@@ -242,28 +242,38 @@ class Notification_server():
                     self.MODE_2_REQUEST -= 1 # Once the value becomes zero, any user thread which is ready will send a mode 2 email.
 
 
-    def current_monitoring(self):
+    def current_monitoring(self, stored=False):
         '''Returns list of coins, trading pairs and timeframes server is currently monitoring'''
 
-        print(f'\nServer is currently monitoring:')
-        for coin in self.MONITORED_COINS:
-            print(f'\ncoin {coin}:')
-            for pair in self.MONITORED_COINS[coin]:
-                print(pair)
-        print('\n')
+        coins_dict = {}
+        if stored:
+            for coin_path in glob(self.data_path + '/*'):
+                coin = coin_path.split('/')[-1]
+                coins_dict[coin] = [tradingpair.split('/')[-1][:-4] for tradingpair in glob(coin_path + f"/{coin}*")]
+        else:
+            coins_dict = self.MONITORED_COINS.copy()
 
+        if coins_dict:
+            if stored:
+                print(f'Server has the following pairs in the database:')
+            else:
+                print(f'Server is currently monitoring:')
+        else:
+            print(f'Server has no stored or monitored coins. Enter command "monitor" to add new coins.')
 
-    def current_monitoring_list(self):
-        '''Returns list of all pairs monitored and stored in the database'''
-
-        currently_monitoring = [tradingpair for coin in self.MONITORED_COINS 
-                                for tradingpair in self.MONITORED_COINS[coin] if coin.split('_')[-1] != 'tradingpairs']
-        
-        stored_tradingpairs = [tradingpair.split('/')[-1][:-4] for coin in glob(self.data_path + '/*') 
-                                for tradingpair in glob(self.data_path + '/' + coin.split('/')[-1] + '/*') if tradingpair.split('.')[-1] != 'json']
-
-        return currently_monitoring, stored_tradingpairs
-
+        for coin in coins_dict:
+            print(f'coin {coin}:')
+            tradingpairs = {}
+            for symbol_timeframe in coins_dict[coin]:
+                tradingpair = symbol_timeframe.split('_')[0]
+                timeframe = symbol_timeframe.split('_')[-1]
+                try:
+                    tradingpairs[tradingpair].append(timeframe)
+                except KeyError:
+                    tradingpairs[tradingpair] = [timeframe]
+            for tradingpair in tradingpairs:
+                print(tradingpair, ':', [timeframe[1:] for timeframe in sorted([Coin.INTERVALS[timeframe] + timeframe for timeframe in tradingpairs[tradingpair]])]) # Print natrually ordered timeframes
+        print('')
 
     def monitor_all_coins(self, coins=None):
         '''Hanndles server coin monitoring initiation and 'all' command'''
@@ -384,13 +394,12 @@ class Notification_server():
     def input_monitor_new(self):
         '''Handles user input for specifying multiple new coins, trading pairs or timeframes to monitor by the server'''
 
-        currently_monitoring, stored_tradingpairs = self.current_monitoring_list()
         input_coin_dict = {}
         deafult_timeframes = ['1w', '3d', '1d', '4h', '1h']
 
         self.SERVER_INSTRUCTION['pause'] = 1 # Stops all server stdout for cleaner user interaction.
-        print(f'Server is currently monitoring:\n{currently_monitoring}\n')
-        print(f'Server has the following pairs in the database:\n {stored_tradingpairs}\n')
+        self.current_monitoring()
+        self.current_monitoring(stored=True)
         print('='*10 + 'INSTRUCTIONS' + '='*10)
         print('>>> If multiple, seperate by spaces')
         print('>>> Enter coin(s) to monitor, choose their respective tradingpair(s) and Optionally list their timeframe(s)')
@@ -442,7 +451,7 @@ class Notification_server():
                     else:
                         # This means server does not have any timeframes of this coin/trading pair stored. Deafult timeframes will be monitored.
                         print(f'Server will start monitoring {coin + tradingpair} with deafult timeframes: {deafult_timeframes}')
-                        input_coin_dict[coin][tradingpair] = deafult_timeframes
+                        input_coin_dict[coin][tradingpair] = deafult_timeframes.copy()
 
                 while True:
                     timeframes = input('OPTIONAL: Input additional timeframes: ') # White spaces will be handled in Coin.get_candles(). 
@@ -468,13 +477,12 @@ class Notification_server():
     def input_drop_coin(self):
         '''Handles user input for dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested'''
 
-        currently_monitoring, stored_tradingpairs = self.current_monitoring_list()
         input_coin_dict = {}
         to_drop = set()
         
         self.SERVER_INSTRUCTION['pause'] = 1 # Stops all server stdout for cleaner user interaction.
-        print(f'Server is currently monitoring:\n{currently_monitoring}\n')
-        print(f'Server has the following pairs in the database:\n {stored_tradingpairs}\n')
+        self.current_monitoring()
+        self.current_monitoring(stored=True)
         print('Enter a coins, coins/tradingpairs, or coins/tradingpairs/timeframes to drop in the list above, appending "-drop"s')
         print('='*10 + 'INSTRUCTIONS' + '='*10)
         print('>>> If multiple, seperate by spaces')
@@ -519,7 +527,7 @@ class Notification_server():
                         to_drop.add(coin + '_' + tradingpair) # This means the user just entered a white space.
                     for timeframe in timeframes.split(' '):
                         timeframe = timeframe.replace('-drop', '') # Incase user appended -drop, which is not needed.
-                        if timeframe == '' or len(timeframe) > 3 or timeframe[-1] in '0123456789':
+                        if timeframe == '' or len(timeframe) > 4 or timeframe[-1] in '023456789':
                             continue # Remove impossible entries immediately.
                         if timeframe == '1m':
                             timeframe = '1M' # 1M month is the only timeframe with uppercase. 1m is for 1 minute however that should never be used. 
