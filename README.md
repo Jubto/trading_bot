@@ -7,9 +7,9 @@ Server initiation:
 
 ![image](https://user-images.githubusercontent.com/71308285/111856442-cf325900-897e-11eb-8024-af6aef6e2673.png)
 
-####Coin monitoring, posting and dropping
+#### Coin monitoring, posting and dropping
 
-######Coin monitoring
+###### Coin monitoring
 
 If this is the first time using the server, the user will be prompted to add any coins they would like to monitor. The image bellow is an example where the user chooses to monitor two coins (INJ and DOGE), selecting their respective trading pairs (INJ-BTC, INJ-USDT, DOGE-BTC, DOGE-USDT, DOGE-AUD), and each trading pairs respective timeframes:
 
@@ -25,7 +25,7 @@ Each json file contains ordered lists of various percentage changes associated w
 
 When the user wants to have an update on their monitored coins, they can use the 'post' command. Currently, this command will return json summary data of each coin trading pair, along with the current scores - in future, this command will be updated to return a saved csv file which the user can view. The image bellow is an example of one of the json objects returned to stdout (one out of many)
 
-######post
+###### post
 
 ![image](https://user-images.githubusercontent.com/71308285/111859206-3f4ada00-8993-11eb-9792-18cc98dfe069.png)
 
@@ -37,7 +37,7 @@ If multiple timeframes of a given coin suddenly starts accumulating scores, this
 
 Eventually machine learning will be implemented to determine a better scoring system and sensitivity to further aid the user's choices.
 
-######dropping
+###### dropping
 
 The user will have the ability to stop monitoring certain pairs, or drop the coin from the server database (only server owner can do this). Using the command "drop":
 
@@ -52,7 +52,7 @@ To see what the server is actively monitoring, use the "monitoring" command. It 
 ![image](https://user-images.githubusercontent.com/71308285/111863202-30255580-89ae-11eb-9337-432346116c6b.png)
 
 
-####Server notification service
+#### Server notification service
 
 In order to start the server notification service, use the command "notify". If this is the first time using the command, and the user does not have postfix installed, the server will run a script to set up the postfix server.
 
@@ -62,13 +62,13 @@ Once installed, another script will run to configure the postfix server, and the
 
 ![image](https://user-images.githubusercontent.com/71308285/111863239-682c9880-89ae-11eb-941a-476980c37ba5.png)
 
-######Multiple users
+###### Multiple users
 
 The server is capable of supporting multiple users. The first user is the server owner (i.e. the user who is running the server), and any subsequent users can be added either by the server owner, or by the server receiving a join request via its Gmail (TODO). 
 
 Each user can monitor their own set of coins, and will only receive their respective mode 1 or mode 2 emails (explained below). Each email will be about a specific coin, and only users which have elected those coins to monitor will receive the emails.
 
-######Two different email modes
+###### Two different email modes
 
 * Mode 1 emails are outbound emails which are only generated and sent if the server detects one of its monitored coins pass the score threshold. This threshold can either manually chosen, or eventually, it will be determined through machine learning. If the score continues to rise, an email will be sent for each rise. 
 * Mode 2 emails are periodic outbound emails sent to the users. The frequency the emails are sent can be modified or turned off. 
