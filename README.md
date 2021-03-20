@@ -35,6 +35,7 @@ If multiple timeframes of a given coin suddenly starts accumulating scores, this
 Eventually machince learning will be implmented to determine a better scoring system and sensitivity to futher aid the user's choices. 
 
 
+If the user wishes to stop monitoring a certain coin, or drop the coin from the server database (only server owner can do this), then use the drop command:
 
 
 
