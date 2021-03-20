@@ -1,6 +1,10 @@
 # trading_bot
 INCOMPLETE trading bot server project
 
+
+![image](https://user-images.githubusercontent.com/71308285/111856284-baa19100-897d-11eb-8a53-dea3a649ff24.png)
+
+
 #TODO Windows/pushbullet notification functionaility
 
 #TODO Historical score and % amp/change analysis and storage
