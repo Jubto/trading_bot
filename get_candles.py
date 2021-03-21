@@ -1,5 +1,5 @@
-from binance.client import Client
-from binance.exceptions import BinanceAPIException
+from binance.client import Client # Third party 
+from binance.exceptions import BinanceAPIException # Third party 
 from config import API_KEY, API_SECRET
 from glob import glob
 from time import time
@@ -19,8 +19,8 @@ class Coin():
 	'''A class which retrieves candle stick data for a given coin avaliable on Binance, performs TA on the stored data, can return a score.'''
 
 	# All avaliable intervals on binance
-	# INTERVALS = {'1m':15, '3m':14, '5m':13, '15m':12, '30m':11, '1h':10, '2h':9, '3h':8, '4h':7, '6h':6, '8h':5, '12h':4, '1d':3, '3d':2, '1w':1, '1M':0} 
-	INTERVALS = {'1m':'p', '3m':'o', '5m':'n', '15m':'m', '30m':'l', '1h':'k', '2h':'j', '3h':'i', '4h':'h', '6h':'g', '8h':'f', '12h':'e', '1d':'d', '3d':'c', '1w':'b', '1M':'a'}
+	INTERVALS = {'1m':'p', '3m':'o', '5m':'n', '15m':'m', '30m':'l', '1h':'k', '2h':'j', '3h':'i',
+				 '4h':'h', '6h':'g', '8h':'f', '12h':'e', '1d':'d', '3d':'c', '1w':'b', '1M':'a'}
 	EARLIEST_DATE = "1 Jan, 2017" # Date binance started
 
 	def __init__(self, coin_symbol, coin_name=None):		
@@ -507,6 +507,7 @@ class Coin():
 
 	
 	def historical_score(self):
+		# Do this using pandas
 		#TODO: This will be a fairly complex method. 
 		#Tasks: obtain 5min candle data to store ONLY as csv. Use each 5min row data as input into the historical_score method. Each row acts like real time measurments back in time.
 		# These real time measurments will be used to create what the relative bull/bear score was back then. The goal is to use all these data points to create a graph 
@@ -530,6 +531,7 @@ class Coin():
 		pass
 
 	def graph_historical_data(self, mode):
+		# Do this using matplotlib/pandas
 		# Take notes from project-falcon
 		# Perhaps make a class dedicated to graphing
 		pass 

@@ -124,12 +124,11 @@ class Notification_server():
                 print(f'Enter "commands" to view all avaliable commands.')
 
 
-    def add_to_monitoring(self, coin_symbol=None, input_dict=None):
+    def add_to_monitoring(self, coin_symbol=None, input_dict={}):
         '''Handles validating and adding items into the server monitoring dictionary MONITORED_COINS'''
         
         # This case is for server start up only
         if coin_symbol:
-            input_dict = {}
             input_dict[coin_symbol] = {'NA':[]} 
 
         # This section handles determining whether coin is valid with Binance, if so it will add to server monitoring.
@@ -286,7 +285,7 @@ class Notification_server():
 
         coins_to_add = set()
         for coin in coins:
-            coins_to_add = coins_to_add.union(self.add_to_monitoring(coin.upper())) # Validate each coin entered, add to monitoring
+            coins_to_add = coins_to_add.union(self.add_to_monitoring(coin_symbol = coin.upper())) # Validate each coin entered, add to monitoring
         self.add_new_coins(coins_to_add) # Start thread for each coin if one doesn't already exist.
 
 
