@@ -2,7 +2,7 @@ from binance.client import Client # Third party
 from binance.exceptions import BinanceAPIException # Third party 
 from config import API_KEY, API_SECRET
 from glob import glob
-from time import time
+from time import time, sleep
 import pandas as pd
 import json 
 import csv
@@ -316,7 +316,7 @@ class Coin():
 							for data in coin_data[symbol][timeframe]:
 								coin_data[symbol][timeframe][data].append(new_data[data])
 						for data in coin_data[symbol][timeframe]:
-							coin_data[symbol][timeframe][data].sort()
+							coin_data[symbol][timeframe][data].sort(reverse=True)
 	
 		with open(self.json_file, 'w') as jf:
 			json.dump(coin_data, jf, indent=4)
@@ -373,6 +373,7 @@ class Coin():
 		if to_monitor:
 			csv_files = [csvfile_name for symbol_timeframe in to_monitor for csvfile_name in csv_files if symbol_timeframe in csvfile_name] # Only look at certain trading pairs. 
 
+		# loading in current price action
 		for csvfile_name in csv_files:
 			symbol = csvfile_name.split('_')[0]
 			timeframe = csvfile_name.split('_')[1].split('.')[0]
@@ -381,7 +382,6 @@ class Coin():
 				final_candle = csvfile.readline().split(':')[0]
 				klines = client.get_historical_klines(symbol, timeframe, int(final_candle))[0]
 				try:
-					score_dict[symbol]
 					score_dict[symbol][timeframe] = self.percent_changes(float(klines[1]), float(klines[2]), float(klines[3]), float(klines[4]))
 				except KeyError:
 					score_dict[symbol] = {timeframe:self.percent_changes(float(klines[1]), float(klines[2]), float(klines[3]), float(klines[4]))}			
@@ -390,6 +390,7 @@ class Coin():
 		with open(self.json_file, 'r') as jf:
 			coin_data = json.load(jf)
 
+		# computing performance/score of current price action based on histortical data
 		for symbol in score_dict:
 			for timeframe in score_dict[symbol]:
 				current_change = score_dict[symbol][timeframe]['candle_change']
@@ -426,7 +427,8 @@ class Coin():
 					else:
 						score_bear += score
 						score_dict[symbol][timeframe][metric] = [performance, current_change, historical_average]
-			
+		
+		# making dict object to send to server for stdout
 		for symbol in score_dict:
 			for timeframe in score_dict[symbol]:
 				for metric in score_dict[symbol][timeframe]:
@@ -483,25 +485,13 @@ class Coin():
 				return klines[0]
 		raise Exception(f'Coin {symbol_timeframe} has no csv file.')
 		
-
 	
 	def compute_historical_score(self, symbol, custom_timeframes = []):
 		'''Returns calculated score.
 		   Candle_max_up means: how well the current price change compares with all the historical maxiumal price changes.'''
 
-		# just do one symbol
-		# This function will compute the whole thing in one run
-		# Store all 5m symbol csv into dataframe - each four columns are new symbol, e.g. injbtc-open injbtc-low injbtc-high injbtc-close injusdt-open, each row is 5m
-		# infact, to compute the real time percentage changes, you can slice the dataframe per day/3day etc.
+		self.update() # Only updates every hour to be more efficent.
 
-		# symbols -> e.g. [INJBTC, INJUSDT, INJBNB] - so always will be of a single coin since it's per coin object
-		# custom_timeframes are for when you want to find historical scoring on timeframes other than deafult ['30m', '1h', '4h', '12h', '1d', '3d']
-
-
-		# if not os.path.exists(self.json_file):
-		# 	raise Exception(f'Coin {self.coin_symbol} has no json file.')	
-		# self.update() # Only updates every hour to be more efficent.
-		
 		symbol_timeframes = []
 		if custom_timeframes:
 			symbol_timeframes = [symbol + '_' + timeframe for timeframe in custom_timeframes]
@@ -514,98 +504,73 @@ class Coin():
 		historical_realtime_priceaction_DF = pd.read_csv(csv_filepath, usecols=[0, 1, 2, 3, 4], names=columns, header=None, skiprows=1)
 
 		# make dataframe to store 5min price, bull bear amplitude info for each timeframe
-		historical_scoring_DF = pd.DataFrame()
+		historical_scoring_DF = pd.read_csv(csv_filepath, usecols=[0, 4], names=["UTC", "price"], header=None, skiprows=1)
 		historical_scoring_DF["bull_score"] = ""
 		historical_scoring_DF["bear_score"] = ""
 		for symbol_timeframe in symbol_timeframes:
 			historical_scoring_DF[symbol_timeframe] = list # [bull, bear, amplitude]
 
 		# make symbol_timeframes_DF which has columns for UTC-date, open, high, low, close, of all timeframes in symbol_timeframes
-		df_positiontracker = {}
 		historical_percent_changes = {}
 		symbol_timeframes_DF = pd.DataFrame()
 		for symbol_timeframe in symbol_timeframes:
 			csv_filepath = self.coin_path + '/' + symbol_timeframe + '.csv'
 			columns = [symbol_timeframe + "-UTC", symbol_timeframe + "-open", symbol_timeframe + "-high", symbol_timeframe + "-low", symbol_timeframe + "-close"]
 			temp_DF = pd.read_csv(csv_filepath, usecols=[0, 1, 2, 3, 4], names=columns, header=None, skiprows=1)
-			df_positiontracker[symbol_timeframe] = {"index":0, "open_price":temp_DF.loc[0,[columns[1]]],
-													"high_price":temp_DF.loc[0, [columns[2]]],
-													"low_price":temp_DF.loc[0, [columns[3]]],
-													"next_UTC":temp_DF.loc[1, [columns[0]]]}
-			previous_UTC = temp_DF.loc[0, [columns[0]]]
-			next_UTC = temp_DF.loc[1, [columns[0]]]
-			temp_series = historical_realtime_priceaction_DF.loc[historical_realtime_priceaction_DF.UTC.between(previous_UTC, next_UTC), symbol + "-close"] 
-			df_positiontracker[symbol_timeframe]["max_5min"] = temp_series.max()
-			df_positiontracker[symbol_timeframe]["min_5min"] = temp_series.min()
 			historical_percent_changes[symbol_timeframe] = {'candle_amplitude':[], 'candle_max_up':[], 'candle_max_down':[]}
 			symbol_timeframes_DF = symbol_timeframes_DF.merge(right=temp_DF, how="outer", left_index=True, right_index=True)
 		
 
 		# initialise reference json to contain the first 21 days of price action percentage changes (candle_amplitude, candle_max_up, candle_max_down)
+		df_positiontracker = {}
 		week_3_UTC = int(symbol_timeframes_DF.loc[21, [symbol + '_1d-UTC']]) # UTC date for 21 days of price action
 		print(f"3 week UTC: {week_3_UTC}")
 		for symbol_timeframe in symbol_timeframes:
 			columns = [symbol_timeframe + "-UTC", symbol_timeframe + "-open", symbol_timeframe + "-high", symbol_timeframe + "-low", symbol_timeframe + "-close"]
 			percent_changes_list = [self.percent_changes(row[1],row[2],row[3],row[4]) for row in symbol_timeframes_DF[columns].to_numpy() if row[0] <= week_3_UTC]
+			index = len(percent_changes_list)
+			df_positiontracker[symbol_timeframe] = {"next_UTC": symbol_timeframes_DF.loc[index, [columns[0]]][0], 
+													"open_price":symbol_timeframes_DF.loc[0,[columns[1]]][0],
+													"index":index} # position 21 days for each timeframe
 			for metric in historical_percent_changes[symbol_timeframe]:
 				historical_percent_changes[symbol_timeframe][metric] = [row[metric] for row in percent_changes_list]
 			historical_percent_changes[symbol_timeframe][metric].sort()
 		
-		# percent_changes(candle_open, candle_high, candle_low, candle_close):
-		# scoring mechanism: 
-			# compute the current percentage change - using 5 min 
-				# provide the percent_changes() method with: open, high, low of given timeframe (using lambda min/max) + close (5min)
-				# capture the current_change only, and use that for the bellow calc
-			# if positive, then compare current change with sorted historical max_up_change percentages - give ranking, compute bull score
-			# if negative, then compare current change with sorted historical max_down_change percentages - give ranking, compute bear score
-			# also add the amplitude change 
-			# we don't actually need 'candle_change' metrix, rather, only need the current_change
-		
 		# loop through every 5 minutes (acting as histroical realtime)
-		# for every 5 minutes 
+		df_index = -1
 		for row in historical_realtime_priceaction_DF.itertuples(name=None): # itertuples is 100x faster than iterrows
-			(current_UTC, high_5m, low_5m, close_5m) = row[0, 2, 3, 4]
-			total_bull, total_bear = 0, 0
+			(current_UTC, high_5m, low_5m, close_5m) = row[1], row[3], row[4], row[5]
+			total_bull, total_bear = 0, 0	
+			df_index += 1
 			if current_UTC <= week_3_UTC:
-				continue
+				continue # skip first three weeks
 			for symbol_timeframe in symbol_timeframes:
-				if current_UTC < df_positiontracker[symbol_timeframe]["next_UTC"]:
+				if current_UTC >= df_positiontracker[symbol_timeframe]["next_UTC"]:
 					index = df_positiontracker[symbol_timeframe]["index"]
 					if index + 1 == symbol_timeframes_DF.shape[0]:
 						continue
-
 					index += 1
-					previous_UTC = df_positiontracker[symbol_timeframe]["next_UTC"]
 					if index + 1 == symbol_timeframes_DF.shape[0]:
 						next_index = index
-						previous_UTC = symbol_timeframes_DF.loc[index - 1, [columns[0]]]
 					else:
 						next_index = index + 1
-
+					
+					# update symbol_timeframe position in dataframe
 					columns = [symbol_timeframe + "-UTC", symbol_timeframe + "-open", symbol_timeframe + "-high", symbol_timeframe + "-low", symbol_timeframe + "-close"]
-					df_positiontracker[symbol_timeframe] = {"index":index, "open_price":symbol_timeframes_DF.loc[index, [columns[1]]],
-															"high_price":symbol_timeframes_DF.loc[index, [columns[2]]],
-															"low_price":symbol_timeframes_DF.loc[index, [columns[3]]], 
-															"next_UTC":symbol_timeframes_DF.loc[next_index, [columns[0]]]}
-					next_UTC = df_positiontracker[symbol_timeframe]["next_UTC"]
-					temp_series = historical_realtime_priceaction_DF.loc[historical_realtime_priceaction_DF.UTC.between(previous_UTC, next_UTC), symbol + "-close"]
-					df_positiontracker[symbol_timeframe]["max_5min"] = temp_series.max()
-					df_positiontracker[symbol_timeframe]["min_5min"] = temp_series.min()
-
-					# update reference json here
+					df_positiontracker[symbol_timeframe] = {"index":index, "open_price":symbol_timeframes_DF.loc[index, [columns[1]]][0],
+															"high_price":symbol_timeframes_DF.loc[index, [columns[2]]][0],
+															"low_price":symbol_timeframes_DF.loc[index, [columns[3]]][0],
+															"close_price":symbol_timeframes_DF.loc[index, [columns[3]]][0],
+															"next_UTC":symbol_timeframes_DF.loc[next_index, [columns[0]]][0]}
+					
+					# update dynamically growing performance ranking json 
 					percent_changes_symboltimeframe = self.percent_changes(df_positiontracker[symbol_timeframe]["open_price"],
 																			df_positiontracker[symbol_timeframe]["high_price"],
 																			df_positiontracker[symbol_timeframe]["low_price"],
 																			df_positiontracker[symbol_timeframe]["close_price"])
 					for metric in historical_percent_changes[symbol_timeframe]:
 						historical_percent_changes[symbol_timeframe][metric].append(percent_changes_symboltimeframe[metric])
-						historical_percent_changes[symbol_timeframe][metric].sort() #nlogn - however list is already pre-sorted
-
-					# make this above into a function
-				if high_5m == df_positiontracker[symbol_timeframe]["max_5min"]:
-					high_5m = df_positiontracker[symbol_timeframe]["high_price"] # note remember if you wanted amplitude info per 5min, use local_max_5min
-				if low_5m == df_positiontracker[symbol_timeframe]["min_5min"]:
-					low_5m = df_positiontracker[symbol_timeframe]["low_price"]
+						historical_percent_changes[symbol_timeframe][metric].sort(reverse=True) #nlogn - however list is already pre-sorted
 				
 				percent_changes_5m = self.percent_changes(df_positiontracker[symbol_timeframe]["open_price"], high_5m, low_5m, close_5m)
 				current_percent_change = percent_changes_5m["candle_change"]
@@ -613,6 +578,7 @@ class Coin():
 					metric = "candle_max_up"
 				else:
 					metric = "candle_max_down"
+				current_percent_change = abs(current_percent_change)
 				size = len(historical_percent_changes[symbol_timeframe][metric])
 				left, right, mid = (0, size, 0)
 				while left <= right: # binary search O(logn)
@@ -629,53 +595,23 @@ class Coin():
 						left = mid + 1
 				performance = round((mid / size)*100, 1)
 				score = self.score_performance(performance)
+				# print(f"timeframe: {symbol_timeframe}, open: {df_positiontracker[symbol_timeframe]['open_price']}, 5min close: {close_5m}, change: {current_percent_change}, size: {size}, performance: {performance} - score: {score} ::: metric {metric}")
 				if metric == "candle_max_up":
 					total_bull += score
-					historical_scoring_DF.loc[current_UTC, symbol_timeframe] = [score, 0]
+					historical_scoring_DF.at[df_index, symbol_timeframe] = [score, 0]
 				else:
 					total_bear += score
-					historical_scoring_DF.loc[current_UTC, symbol_timeframe] = [0, score]
-			historical_scoring_DF.loc[current_UTC, "bull_score"] = total_bull
-			historical_scoring_DF.loc[current_UTC, "bear_score"] = total_bear
+					historical_scoring_DF.at[df_index, symbol_timeframe] = [0, score]
+			historical_scoring_DF.loc[df_index, "bull_score"] = total_bull
+			historical_scoring_DF.loc[df_index, "bear_score"] = total_bear
 
-
+		historical_scoring_DF.to_csv(self.coin_path + f"/{symbol}_historical_scoring.csv")
+		with open(self.coin_path + f"/{symbol}_historical_analysis.json", 'w') as jf:
+			json.dump(historical_percent_changes, jf, indent=4)
 
 
 	def historical_score(self):
-		# Do this using pandas
-		#TODO: This will be a fairly complex method. 
-		#Tasks: obtain 5min candle data to store ONLY as csv. Use each 5min row data as input into the historical_score method. Each row acts like real time measurments back in time.
-		# These real time measurments will be used to create what the relative bull/bear score was back then. The goal is to use all these data points to create a graph 
-		# This graph can be shown on the github readme to clearly show the program working and the product of the program
-		# Additional metrixs of the graph will be: The % amp and % change PER 5 min, per timeframe (1h, 1d, 3d etc), so a lot of data.
-		# The goal would be to be able to toggle on and off some of the lines, and try to find places where the score peaks, with %amp/%change peaking at ALH, then
-		# also adding the price action to see whether you can deduce some clear moments to sell
-		# in fact, using the historical price action, you can then determine customised bull/bear scores for a given coin
-		# note: running this would take ages, so it should only be run once, then stored as a file with all the data. 
-		# possibly add volumn data to this.
 
-		# in terms of how: So image we have out dataset. We create a new json file which will dynamically grow, Starting from the beginning, each timeframe the passes, you update
-		# the json file with the resulting % changes, but every 5 min you use this new small json file to run a current_score like method to get the bull/bear score and store that
-		# in new csv - so a csv with all 5min from beginning and their relative scores + also append to each row (5min) the %change and %amp for each timeframe
-		# so the new json will NOT contain 5min tf, but will contain 1h etc. and grow from size 0 up to the latest version, but each time it grows you do all these things.  
-
-		# Note: so the 5 minute time frames are used to simulate the 1h, 4h etc. timeframes to then compute the scores - 
-		# I think to start we need at least 3 weeks of data 
-		
-		# scoring function: 
-			# for all coins, the following timeframes are required for computing score
-			# 30 min, 1h, 4h, 12h, 1d, 3d
-			# potentially make it so you can additionally add 1w and 1M if there's a lot of history
-			# return both the total score, and the score for each timeframe (e.g. 30min has 5, 1h was 6, 4h was 1 etc.) to give clearer idea
-			# input: current percentrages for those timeframes + json of those timeframes
-				# function will be used by realtime and historical (via 5 min)
-			# implementation: simply break up the method above into a printing method and scoring method 
-
-		# later on, I want to see if I can add other exchanges which have older data, maybe like bitrex
-
-		#TODO I think I will make two kinds of csvs - one for presentation (i.e. for emailing) and one for computation (i.e. scoring)
-		# The scoring csvs will be loaded into pandas df -> anaylsis -> then using pandas plotting for the graphing 
-		pass
 		# stanard variable naming
 		# BTC == coin_symbol
 		# USDT == trading_pair
