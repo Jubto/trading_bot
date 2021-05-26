@@ -411,14 +411,14 @@ class Notification_server():
             if self.re_search(coin_symbols):
                 continue
             break
-        for coin in coin_symbols.split(' '):
-            if coin == '':
+        for coin_symbol in coin_symbols.split(' '):
+            if coin_symbol == '':
                 continue
-            input_coin_dict[coin] = {} # Dictionary for tradingpairs.
+            input_coin_dict[coin_symbol] = {} # Dictionary for tradingpairs.
 
-        for coin in input_coin_dict:
+        for coin_symbol in input_coin_dict:
             while True:
-                tradingpairs = str(input(f'Input {coin} trading pairs: ')).upper() 
+                tradingpairs = str(input(f'Input {coin_symbol} trading pairs: ')).upper() 
                 if self.re_search(tradingpairs):
                     continue
                 break
@@ -426,37 +426,37 @@ class Notification_server():
             for tradingpair in tradingpairs:
                 if tradingpair == '':
                     continue
-                input_coin_dict[coin][tradingpair] = [] # List for timeframes of each tradingpair.
-            for tradingpair in input_coin_dict[coin]:
-                symbol = coin + tradingpair
+                input_coin_dict[coin_symbol][tradingpair] = [] # List for timeframes of each tradingpair.
+            for tradingpair in input_coin_dict[coin_symbol]:
+                symbol = coin_symbol + tradingpair
                 try:
-                    for monitored_symbol_timeframe in self.MONITORED_COINS[coin]:
+                    for monitored_symbol_timeframe in self.MONITORED_COINS[coin_symbol]:
                         if symbol == monitored_symbol_timeframe.split('_')[0]:
-                            input_coin_dict[coin][tradingpair].append(monitored_symbol_timeframe.split('_')[1]) # Add all monitored timeframes for a given tradingpair.
+                            input_coin_dict[coin_symbol][tradingpair].append(monitored_symbol_timeframe.split('_')[1]) # Add all monitored timeframes for a given tradingpair.
                 except KeyError:
                     pass # Means server is not monitoring coin.
 
-                if input_coin_dict[coin][tradingpair]:
+                if input_coin_dict[coin_symbol][tradingpair]:
                     # This means coin is currently being monitored by server. User can add aditional trading pairs or timeframes.
-                    print(f'Server currently monitoring {coin + tradingpair} with timeframes: {input_coin_dict[coin][tradingpair]}')
+                    print(f'Server currently monitoring {coin_symbol + tradingpair} with timeframes: {input_coin_dict[coin_symbol][tradingpair]}')
                 else:
                     # This means coin entered is currently not being monitored by server (although it could be in the database). 
-                    inspect_coin = Coin(coin) 
-                    stored_timeframes = inspect_coin.get_timeframes(coin + tradingpair)
+                    inspect_coin = Coin(coin_symbol) 
+                    stored_timeframes = inspect_coin.get_timeframes(coin_symbol + tradingpair)
                     if stored_timeframes:
                         # This means server is not currently monitoring this tradingpair, however has its timeframes stored in database.
-                        print(f'Server will start monitoring {coin + tradingpair} with stored timeframes: {stored_timeframes}')   
-                        input_coin_dict[coin][tradingpair] = stored_timeframes   
+                        print(f'Server will start monitoring {coin_symbol + tradingpair} with stored timeframes: {stored_timeframes}')   
+                        input_coin_dict[coin_symbol][tradingpair] = stored_timeframes   
                     else:
                         # This means server does not have any timeframes of this coin/trading pair stored. Deafult timeframes will be monitored.
-                        print(f'Server will start monitoring {coin + tradingpair} with deafult timeframes: {deafult_timeframes}')
-                        input_coin_dict[coin][tradingpair] = deafult_timeframes.copy()
+                        print(f'Server will start monitoring {coin_symbol + tradingpair} with deafult timeframes: {deafult_timeframes}')
+                        input_coin_dict[coin_symbol][tradingpair] = deafult_timeframes.copy()
 
                 while True:
                     timeframes = input('OPTIONAL: Input additional timeframes: ') # White spaces will be handled in Coin.get_candles(). 
                     if self.re_search(timeframes):
                         continue
-                    input_coin_dict[coin][tradingpair].extend(timeframes.split(' ')) # Add any additional timeframes on top of current ones. 
+                    input_coin_dict[coin_symbol][tradingpair].extend(timeframes.split(' ')) # Add any additional timeframes on top of current ones. 
                     break
         
         self.SERVER_INSTRUCTION['pause'] = 0 # Unpause server stdout.
@@ -494,17 +494,17 @@ class Notification_server():
             if self.re_search(coin_symbols):
                 continue
             break
-        for coin in coin_symbols.split(' '):
-            if coin == '':
+        for coin_symbol in coin_symbols.split(' '):
+            if coin_symbol == '':
                 continue
-            input_coin_dict[coin] = [] # List for tradingpairs.
+            input_coin_dict[coin_symbol] = [] # List for tradingpairs.
 
-        for coin in input_coin_dict:
-            if '-DROP' in coin:
-                to_drop.add(coin)
+        for coin_symbol in input_coin_dict:
+            if '-DROP' in coin_symbol:
+                to_drop.add(coin_symbol)
                 continue # Skip rest of user input interaction. 
             while True:
-                tradingpairs = str(input(f'Input {coin} trading pairs: ')).upper() 
+                tradingpairs = str(input(f'Input {coin_symbol} trading pairs: ')).upper() 
                 if self.re_search(tradingpairs):
                     continue
                 tradingpairs = tradingpairs.split(' ')
@@ -512,25 +512,25 @@ class Notification_server():
                     if tradingpair == '':
                         continue
                     if '-DROP' in tradingpair:
-                        to_drop.add(coin + '_' + tradingpair)
+                        to_drop.add(coin_symbol + '_' + tradingpair)
                         continue # Skip rest of user input interaction. 
-                    input_coin_dict[coin].append(tradingpair) 
+                    input_coin_dict[coin_symbol].append(tradingpair) 
                 break
 
-            for tradingpair in input_coin_dict[coin]:
+            for tradingpair in input_coin_dict[coin_symbol]:
                 while True:
-                    timeframes = str(input(f'Input {coin + tradingpair} timeframes: '))
+                    timeframes = str(input(f'Input {coin_symbol + tradingpair} timeframes: '))
                     if self.re_search(timeframes):
                         continue
                     if not re.search('[^ ]', timeframes):
-                        to_drop.add(coin + '_' + tradingpair) # This means the user just entered a white space.
+                        to_drop.add(coin_symbol + '_' + tradingpair) # This means the user just entered a white space.
                     for timeframe in timeframes.split(' '):
                         timeframe = timeframe.replace('-drop', '') # Incase user appended -drop, which is not needed.
                         if timeframe == '' or len(timeframe) > 4 or timeframe[-1] in '023456789':
                             continue # Remove impossible entries immediately.
                         if timeframe == '1m':
                             timeframe = '1M' # 1M month is the only timeframe with uppercase. 1m is for 1 minute however that should never be used. 
-                        to_drop.add(coin + '_' + tradingpair + '_@' + timeframe)  
+                        to_drop.add(coin_symbol + '_' + tradingpair + '_@' + timeframe)  
                     break
         Thread(target=self.drop_coins, args=(to_drop,), daemon=True).start()
         self.SERVER_INSTRUCTION['pause'] = 0 # Unpause server stdout.
