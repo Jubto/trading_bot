@@ -93,7 +93,7 @@ An example mode 2 email which was sent from the postfix server initiation above 
 
 #TODO Possibly add older exchanges with more historical data
 
-#TODO Webpage to interact with server
+#TODO RESTful webserver which interacts with tradingbot server
 
 #TODO Possibly add emergency trading functionaility 
 
