@@ -437,85 +437,7 @@ class Coin():
 						score_dict[symbol][timeframe][metric] = 'AVERAGE' # Nothing special, just ignore. 
 
 		return [f'{self.coin_symbol}', score_bull, score_bear, price, score_dict, 'coin_score']
-		
 
-	def generate_result_files(self, mode):
-		self.generate_summary_csv(mode)
-		self.graph_historical_data(mode)
-
-
-	def generate_summary_csv(self, mode):
-		pass
-
-	
-	def score_performance(self, max_list, change_list, size, absolute_change, current_percent_change):
-		score, retain = 0, 0
-		if absolute_change >= max_list[int(size * 0.75)]: 
-			if absolute_change <= max_list[int(size * 0.8)]:
-				score = 1
-			elif absolute_change <= max_list[int(size * 0.85)]:
-				score = 2
-			elif absolute_change <= max_list[int(size * 0.9)]:
-				score = 3
-			elif absolute_change <= max_list[int(size * 0.95)]:
-				score = 4
-			elif absolute_change <= max_list[int(size * 0.975)]:
-				score = 5
-			else:
-				score = 6
-			if current_percent_change > 0 and current_percent_change >= change_list[int(size * 0.9)]:
-				retain = 1
-				if current_percent_change <= change_list[int(size * 0.95)]:
-					retain = 2
-				elif current_percent_change <= change_list[int(size * 0.97)]:
-					retain = 3
-				elif current_percent_change <= change_list[int(size * 0.98)]:
-					retain = 4
-				elif current_percent_change <= change_list[int(size * 0.99)]:
-					retain = 5
-				else:
-					retain = 6
-			elif current_percent_change < 0 and current_percent_change <= change_list[int(size * 0.1)]:
-				retain = 1
-				if current_percent_change >= change_list[int(size * 0.05)]:
-					retain = 2
-				elif current_percent_change >= change_list[int(size * 0.03)]:
-					retain = 3
-				elif current_percent_change >= change_list[int(size * 0.02)]:
-					retain = 4
-				elif current_percent_change >= change_list[int(size * 0.01)]:
-					retain = 5
-				else:
-					retain = 6
-		return score, retain
-
-	def score_amplitude(self, amp_list, size, amplitude_change):
-		if amplitude_change >= amp_list[int(size * 0.75)]: 
-			if amplitude_change <= amp_list[int(size * 0.8)]:
-				return 1
-			elif amplitude_change <= amp_list[int(size * 0.85)]:
-				return 2
-			elif amplitude_change <= amp_list[int(size * 0.9)]:
-				return 3
-			elif amplitude_change <= amp_list[int(size * 0.95)]:
-				return 4
-			elif amplitude_change <= amp_list[int(size * 0.975)]:
-				return 5
-			else:
-				return 6
-		return 0
-
-	def get_most_recent_candles(self, symbol_timeframe):
-		
-		# symbol_timeframe in the form BTCUSDT_4h
-		csvfile_name = self.coin_path + '/' + symbol_timeframe + '.csv'
-		if os.path.exists(csvfile_name):
-			with open(csvfile_name, 'r', newline='') as csvfile:
-				final_candle = csvfile.readline().split(':')[0]
-				klines = client.get_historical_klines(symbol_timeframe.split('_')[0], symbol_timeframe.split('_')[1], int(final_candle))
-				return klines[0]
-		raise Exception(f'Coin {symbol_timeframe} has no csv file.')
-		
 	
 	def compute_historical_score(self, symbol, custom_timeframes = []):
 		'''Calculates bull/bear/retain score for all 5 minute intervals of the coins history.
@@ -670,6 +592,63 @@ class Coin():
 		with open(self.coin_path + f"/historical/{symbol}_historical_analysis.json", 'w') as jf:
 			json.dump(historical_percent_changes, jf, indent=4) 
 
+	def score_performance(self, max_list, change_list, size, absolute_change, current_percent_change):
+		score, retain = 0, 0
+		if absolute_change >= max_list[int(size * 0.75)]: 
+			if absolute_change <= max_list[int(size * 0.8)]:
+				score = 1
+			elif absolute_change <= max_list[int(size * 0.85)]:
+				score = 2
+			elif absolute_change <= max_list[int(size * 0.9)]:
+				score = 3
+			elif absolute_change <= max_list[int(size * 0.95)]:
+				score = 4
+			elif absolute_change <= max_list[int(size * 0.975)]:
+				score = 5
+			else:
+				score = 6
+			if current_percent_change > 0 and current_percent_change >= change_list[int(size * 0.9)]:
+				retain = 1
+				if current_percent_change <= change_list[int(size * 0.95)]:
+					retain = 2
+				elif current_percent_change <= change_list[int(size * 0.97)]:
+					retain = 3
+				elif current_percent_change <= change_list[int(size * 0.98)]:
+					retain = 4
+				elif current_percent_change <= change_list[int(size * 0.99)]:
+					retain = 5
+				else:
+					retain = 6
+			elif current_percent_change < 0 and current_percent_change <= change_list[int(size * 0.1)]:
+				retain = 1
+				if current_percent_change >= change_list[int(size * 0.05)]:
+					retain = 2
+				elif current_percent_change >= change_list[int(size * 0.03)]:
+					retain = 3
+				elif current_percent_change >= change_list[int(size * 0.02)]:
+					retain = 4
+				elif current_percent_change >= change_list[int(size * 0.01)]:
+					retain = 5
+				else:
+					retain = 6
+		return score, retain
+
+	def score_amplitude(self, amp_list, size, amplitude_change):
+		if amplitude_change >= amp_list[int(size * 0.75)]: 
+			if amplitude_change <= amp_list[int(size * 0.8)]:
+				return 1
+			elif amplitude_change <= amp_list[int(size * 0.85)]:
+				return 2
+			elif amplitude_change <= amp_list[int(size * 0.9)]:
+				return 3
+			elif amplitude_change <= amp_list[int(size * 0.95)]:
+				return 4
+			elif amplitude_change <= amp_list[int(size * 0.975)]:
+				return 5
+			else:
+				return 6
+		return 0
+
 
 	def historical_score(self):
 		pass
@@ -693,6 +672,14 @@ class Coin():
 		# so the Y axis is profit 
 		pass 
 
+	def generate_result_files(self, mode):
+		self.generate_summary_csv(mode)
+		self.graph_historical_data(mode)
+
+
+	def generate_summary_csv(self, mode):
+		pass
+
 	def volumn(self):
 		# convert INJ volumne data to usdt - add this data to graph 
 		pass
@@ -707,5 +694,3 @@ class Coin():
 	def notify(self):
 		pass
 
-coin = Coin('INJ')
-coin.compute_historical_score('INJUSDT')

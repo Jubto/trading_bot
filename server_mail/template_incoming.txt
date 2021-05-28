@@ -1,8 +1,0 @@
-
-FORMAT
-
-Request user1@gmail.com Intruction: monitor coins DOGE tradingpair USDT-12h-6h AUD 
-
-Request user5@gmail.com Instruction: join 
-
-Request user3@gmail.com Instruction: drop coins INJ
