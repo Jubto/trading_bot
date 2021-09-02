@@ -1,4 +1,3 @@
-from typing import final
 from binance.client import Client # Third party 
 from binance.exceptions import BinanceAPIException # Third party 
 from config import API_KEY, API_SECRET
@@ -9,38 +8,41 @@ import bisect
 import json 
 import csv
 import os
-import sys
-import re
 
+'''
+Semantics with examples
+
+__Coin = INJ
+__Tradingpair = USDT
+__Symbol = INJUSDT
+__Timeframe = 5m
+__Symbol_timeframe  = INJUSDT_5m
+
+'''
 
 #https://python-binance.readthedocs.io/en/latest/market_data.html#id7
-client = Client(API_KEY, API_SECRET) # new client object 
+client = Client(API_KEY, API_SECRET) 
 
 
 # make different coin objects, e.g. INJ, BTC, FTM etc. 
 class Coin():
 	'''A class which retrieves candle stick data for a given coin avaliable on Binance, performs TA on the stored data, can return a score.'''
 
-	# All avaliable intervals on binance
-	INTERVALS = {'1m':'p', '3m':'o', '5m':'n', '15m':'m', '30m':'l', '1h':'k', '2h':'j', '3h':'i',
-				 '4h':'h', '6h':'g', '8h':'f', '12h':'e', '1d':'d', '3d':'c', '1w':'b', '1M':'a'}
+	INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M'] # All avaliable intervals on binance
 	EARLIEST_DATE = "1 Jan, 2017" # Date binance started
 
-	def __init__(self, coin_symbol, coin_name=None):		
-		data_path = os.path.dirname(os.path.realpath(__file__)) + '/' + 'coindata'
-		coin_path = os.path.join(data_path, coin_symbol)
-		if not os.path.exists(coin_path):
-			os.mkdir(coin_path)
-
-		if type(coin_symbol) != str:
+	def __init__(self, coin):	
+		if type(coin) != str:
 			raise Exception(f'Coin objects must be initialised with a string symbol and string name.')
-		
-		self.coin_symbol = coin_symbol
-		self.coin_name = coin_name 
-		self.coin_path = coin_path
-		self.json_file = self.coin_path + '/' + 'analysis' + '_' +  self.coin_symbol + '.json'
+
+		self.coin = coin
+		self.coin_path = os.path.join(os.path.dirname(os.path.realpath(__file__)) + '/' + 'coindata', coin)
+		self.json_file = self.coin_path + '/' + 'analysis' + '_' +  self.coin + '.json'
 		self.previous_update_UTC = None
 		self.deafult_scoring_timeframes = ['1h', '4h', '12h', '1d', '3d'] # deafult set of timeframes used to compute score
+
+		if not os.path.exists(self.coin_path):
+			os.mkdir(self.coin_path)
 
 	def get_candles(self, tradingpair, intervals = []):
 		'''
@@ -49,20 +51,11 @@ class Coin():
 		If coin has data stored, then this will retreve only the latest candle data. 	
 		'''
 
-		timeframes = [] 
-
-		if type(tradingpair) != str:
-			raise Exception(f'get_candles method requires a string for tradingpair parameter.') # TODO remove once everything is done, since only server uses this method
-
-		[timeframes.append(str(interval)) for interval in intervals if str(interval) in self.INTERVALS] # Ensure all intervals provided are valid.
-		if len(timeframes) != len(intervals):
-			invalid = [entry for entry in intervals if entry not in timeframes and entry != '']
-			if invalid:
-				print(f"Warning: None of the optionals intervals in {invalid} will be added.\nEither they're already part of the deafult, or are invalid.")
+		timeframes = [str(interval) for interval in intervals if str(interval) in self.INTERVALS] # Ensures all intervals provided are valid
 		
 		for timeframe in timeframes:
-			datafile = self.csv_filename(tradingpair, timeframe)
-			symbol = self.coin_symbol.upper() + tradingpair.upper()
+			datafile = self.csv_path(tradingpair, timeframe)
+			symbol = self.coin.upper() + tradingpair.upper()
 			try:
 				if os.path.exists(datafile):
 					with open(datafile, 'r', newline='') as csvfile: 
@@ -79,20 +72,17 @@ class Coin():
 			except BinanceAPIException:
 				# If trading pair does not exist, coin object will remove all assoicated files and directories. 
 				print(f'API exception, please ensure trading pair {symbol} exists.')
-				if self.list_saved_files():
+				if self.list_saved_filenames():
 					self.remove_tradingpair(tradingpair.upper()) # Means coin symbol exists however trading pair does not exist in Binance.
 				else:
 					self.remove_coin() # Means coin symbol does not exist in Binance.
-				return 0
 		if timeframes:
 			self.create_json_file()
-			return 1
 
 
 	def remove_timeframe(self, symbol_timeframe):
 		'''Handles removal of timeframe for given coin'''
 
-		symbol_timeframe = symbol_timeframe[1:] # Remove leading 3
 		datafile = self.coin_path + '/' + symbol_timeframe + '.csv'
 		if os.path.exists(datafile):
 			os.remove(datafile)
@@ -106,8 +96,7 @@ class Coin():
 	def remove_tradingpair(self, symbol):
 		'''Handles removal of trading pair from given coin'''
 
-		symbol = symbol[1:] # Remove leading 2
-		files = self.list_saved_files()
+		files = self.list_saved_filenames()
 		for f in files:
 			if symbol == f.split('_')[0]:
 				os.remove(self.coin_path + '/' + f)
@@ -122,10 +111,10 @@ class Coin():
 		for path in files:
 			os.remove(path)
 		os.rmdir(self.coin_path)
-		print(f'All assoicated files for {self.coin_symbol} have been removed.')
+		print(f'All assoicated files for {self.coin} have been removed.')
 
 
-	def csv_maker(self, file_path, mode, klines):
+	def csv_maker(self, file_path, mode, klines): # TODO make private
 		'''Creates new or appends to existing csv files for coin objects. Inserts header in the first row
 		   Header row contains: Final row UTC timestamp, number of rows, pointer position at EOF.'''
 
@@ -134,7 +123,6 @@ class Coin():
 			num_rows = len(klines) - 1 # Last row is not added
 			if mode == 'w' or mode == 'r+':			
 				if mode == 'w':
-					# Only activates when creating csv file for first time.
 					csvfile.write(f'{0:0106}') # Temporary empty row for header.
 				else:
 					with open(file_path, 'a', newline='') as csvfile_temp:
@@ -148,39 +136,29 @@ class Coin():
 			csv_writer = csv.writer(csvfile, delimiter=',') 
 			[csv_writer.writerow(kline) for kline in klines[:-1]] # Don't add final candle row as that candle hasn't closed yet		
 			if mode == 'w':
-				# If block only activates when creating csv file for first time. 
 				pointer = csvfile.tell()
 				csvfile.seek(0)
 				csvfile.write(f'{final_candle},{num_rows:030},{pointer:060}\n') # Add header, length always stays constant. 
 
 
-	def csv_filename(self, tradingpair, timeframe):
+	def csv_path(self, tradingpair, timeframe): # TODO make private
 		'''Returns absolute path of coin objects specified csv file'''
 
-		if (type(tradingpair) and type(timeframe)) != str:
-			raise Exception(f'csv_filename method requires strings as arguments.') 
-
-		symbol = self.coin_symbol.upper() + tradingpair.upper()
-		datafile = symbol + '_' + timeframe
-		return self.coin_path + '/' + datafile + '.csv'
+		return self.coin_path + '/' + self.coin.upper() + tradingpair.upper() + '_' + timeframe + '.csv'
 
 
-	def list_saved_files(self):
-		'''Returns a list of all csv files of coin object. If no csv files are present, raises exception.'''
+	def list_saved_filenames(self):
+		'''Returns a list of all csv files of coin object, e.g. returns [INJBTC_4h.csv, INJUSDT_4h.csv]'''
 
-		file_paths = self.coin_path + '/' + self.coin_symbol + '*'
-		files = glob(file_paths)
-		if len(files) == 0:
-			# print(f'WARNING: database has no coin {self.coin_symbol} stored. Please run get_candles method to obtain its data.')
-			return []
-		return [f.split('/')[-1] for f in files] # List of csv file names, e.g. INJBTC_4h.csv (list does not include json file intentionally).
+		files = glob(self.coin_path + '/' + self.coin + '*')
+		return [f.split('/')[-1] for f in files if f.split('_')[-1][:2] != "5m"] # exclude 5m since this file is only intended for historical_commputation
 
 
-	def create_json_object(self, *files):
+	def create_json_object(self, *files): # TODO make private
 		'''This method will return a json string containing trading pair object (key) their timeframes (keys), and % changes (key + list)'''
 		
 		symbol_timeframe = {}
-		csv_files = self.list_saved_files()
+		csv_files = self.list_saved_filenames()
 
 		if files:
 			csv_files = files
@@ -196,7 +174,7 @@ class Coin():
 		return json.dumps(symbol_timeframe, indent=4)
 
 
-	def create_json_file(self):
+	def create_json_file(self): # TODO make private
 		'''Creates and returns a json object string'''
 
 		if os.path.exists(self.json_file):
@@ -206,21 +184,21 @@ class Coin():
 		with open(self.json_file, 'w') as jf:
 			json.dump(coin_data, jf, indent=4)
 
-		print(f'New json file for {self.coin_symbol} has been created in: {self.json_file}')
+		print(f'New json file for {self.coin} has been created in: {self.json_file}')
 
 
-	def update_json(self):
+	def update_json(self): # TODO make private
 		'''Ensures stored csvfiles are synchronous with json by either adding or deleting csvfiles to/from json.'''
 		
 		if not os.path.exists(self.json_file):
-			print(f'New json file for {self.coin_symbol} will be created.')
+			print(f'New json file for {self.coin} will be created.')
 			self.create_json_file()
 		
 		with open(self.json_file, 'r') as jf:
 			coin_data = json.load(jf)
 
 		# Find difference of all tradingpairs_timeframes of json file with Coin directory csv files
-		csv_files = set(self.list_saved_files())
+		csv_files = set(self.list_saved_filenames())
 		json_data = set()
 		for symbol in coin_data:
 			for timeframe in coin_data[symbol]:
@@ -255,18 +233,15 @@ class Coin():
 			return 1 # To indicate an update of json file as occurred.
 
 
-	def add_data_to_json(self):
+	def add_data_to_json(self): # TODO make private
 		'''Retreves candle data starting from last updated date and then updates the json'''
-
-		if not os.path.exists(self.json_file):
-			raise Exception(f'Coin {self.coin_symbol} has no json file.')
 
 		with open(self.json_file, 'r') as jf:
 			coin_data = json.load(jf)
 
 		for symbol in coin_data:
 			for timeframe in coin_data[symbol]:
-				datafile = self.csv_filename(symbol.split(self.coin_symbol)[1], timeframe)
+				datafile = self.csv_path(symbol.split(self.coin)[1], timeframe)
 				with open(datafile) as csvfile:
 					csv_reader = csv.reader(csvfile)
 					header = csv_reader.__next__()
@@ -289,7 +264,7 @@ class Coin():
 			json.dump(coin_data, jf, indent=4)
 
 
-	def update(self):
+	def update(self): # TODO make private
 		'''Updates all csv and json files of given file object.'''
  
 		# Perform this low cost update everytime update() is called. Ensures json file is synchronous with stored csvfiles. 
@@ -299,10 +274,10 @@ class Coin():
 
 		# More expensive update, only perform at most every hour (unless needed via need_update). This updates candle/json data.
 		if need_update or self.previous_update_UTC == None or (time() - self.previous_update_UTC >= 3600):
-			csv_files = self.list_saved_files()
+			csv_files = self.list_saved_filenames()
 			tradingpair_timeframes = {}
 			for csvfile_name in csv_files:
-				tradingpair = csvfile_name.split('_')[0].split(self.coin_symbol)[-1]
+				tradingpair = csvfile_name.split('_')[0].split(self.coin)[-1]
 				timeframe = csvfile_name.split('_')[1].split('.')[0]
 				if timeframe == '5m':
 					continue # 5min should only be updated for historical score method
@@ -317,29 +292,28 @@ class Coin():
 
 	def current_score(self, to_monitor=[]):
 		'''Returns current calculated score.
-		   Bull/Bear score indicates how well the current price action performs compared to all histortical candle data
-		   Retain_score indicates how likely the current price will retain based on historical data
-		   Amplitude score indicates how volitile the current price action is compared to history'''
+		   Bull/Bear score indicates how well the current price action performs compared to all histortical candle max/min spikes
+		   change_score indicates how likely the current price will change_score based on all historical candle closes
+		   Amplitude score indicates how volitile the current price action is compared to all historical candle closes
+		   Optional parameter `to_monitor` which takes a list of symbol_timeframes to specifically calculate score for.'''
 
-		if not os.path.exists(self.json_file):
-			raise Exception(f'Coin {self.coin_symbol} has no json file.')	
-		self.update() # Only updates every hour to be more efficent.
+		self.update() # Get latest candles
 
-		score_bull, score_bear, price, score_dict = 0, 0, 0, {}
-		csv_files = self.list_saved_files()
+		score_bull, score_bear, score_change, timefame_count, price, score_dict = 0, 0, 0, 0, 0, {}
+		csv_files = self.list_saved_filenames()
 		if to_monitor:
-			csv_files = [csvfile_name for symbol_timeframe in to_monitor for csvfile_name in csv_files if symbol_timeframe in csvfile_name] # Only look at certain trading pairs. 
+			csv_files = [csvfile_name for symbol_timeframe in to_monitor for csvfile_name in csv_files if symbol_timeframe in csvfile_name]
 		with open(self.json_file, 'r') as jf:
 			coin_data = json.load(jf)
 
 		# loading in current price action
-		for csvfile_name in csv_files:
+		for csvfile_name in sorted(csv_files, key= lambda i : Coin.INTERVALS.index(i.split("_")[-1].split(".")[0])):
 			symbol = csvfile_name.split('_')[0]
 			timeframe = csvfile_name.split('_')[1].split('.')[0]
 			csvfile_name = self.coin_path + '/' + csvfile_name
 			with open(csvfile_name, 'r', newline='') as csvfile:
 				final_candle = csvfile.readline().split(',')[0]
-				klines = client.get_historical_klines(symbol, timeframe, int(final_candle))[0] # Get latest candles
+				klines = client.get_historical_klines(symbol, timeframe, int(final_candle))[0] # Get latest candles from Binance
 				try:
 					score_dict[symbol][timeframe] = self.percent_changes(float(klines[1]), float(klines[2]), float(klines[3]), float(klines[4]))
 				except KeyError:
@@ -348,19 +322,22 @@ class Coin():
 
 		# compute score of current price action based on histortical data
 		for symbol in score_dict:
+			timefame_count += len(score_dict[symbol])
 			for timeframe in score_dict[symbol]:
 				current_change = score_dict[symbol][timeframe]['candle_change']
+				score_dict[symbol][timeframe]['candle_change'] = str(current_change) + "%"
 				amplitude_change = score_dict[symbol][timeframe]['candle_amplitude']
-				score_dict[symbol][timeframe] = ''
 				if current_change > 0:
 					metric = "candle_max_up"
+					score_dict[symbol][timeframe]["candle_max_down"] = 'NA'
 				else:
 					metric = "candle_max_down"
+					score_dict[symbol][timeframe]["candle_max_up"] = 'NA'
 				amp_score = self.score_amplitude(
 					amp_list= coin_data[symbol][timeframe]["candle_amplitude"],
 					size= len(coin_data[symbol][timeframe]["candle_amplitude"]),
 					amplitude_change= amplitude_change)
-				score, retain_score = self.score_performance(
+				score, change_score = self.score_performance(
 					max_list= coin_data[symbol][timeframe][metric],
 					change_list= coin_data[symbol][timeframe]["candle_change"],
 					size= len(coin_data[symbol][timeframe][metric]),
@@ -370,52 +347,50 @@ class Coin():
 				# Construct current scoring summary dict to send to server
 				if amp_score:
 					historical_average = self.average(coin_data[symbol][timeframe]["candle_amplitude"])
-					score_dict[symbol][timeframe]["candle_amplitude"] = f"Score: {amp_score} | Current change: {amplitude_change}% | average: {historical_average}%"
+					score_dict[symbol][timeframe]["candle_amplitude"] = f"Score: {amp_score} | Change: {amplitude_change}% | average: {historical_average}%"
 				else:
-					score_dict[symbol][timeframe][metric] = 'AVERAGE' # Means current price action is bellow the top 75% of history, i.e. not important
+					score_dict[symbol][timeframe]["candle_amplitude"] = 'AVERAGE' # Means current price action is bellow the top 75% of history, i.e. not important
 				
 				if score:
 					historical_average = self.average(coin_data[symbol][timeframe][metric])
-					score_dict[symbol][timeframe][metric] = f"Score: {score} | Retainment score: {retain_score} | Current change: {current_change}% | average: {historical_average}%"
+					score_dict[symbol][timeframe][metric] = f"Score: {score} | Change score: {change_score} | Change: {current_change}% | average: {historical_average}%"
 					if metric == "candle_max_up":
 						score_bull += score
 					else:
 						score_bear += score
 				else:
 					score_dict[symbol][timeframe][metric] = 'AVERAGE'
-		return [self.coin_symbol, score_bull, score_bear, price, score_dict, 'coin_score']
+				score_change += change_score
+
+		return [self.coin, score_bull, score_bear, score_change, timefame_count, price, score_dict, "coin_score"] # final index represents type of information
 
 	
 	def compute_historical_score(self, symbol, custom_timeframes = []):
-		'''Calculates bull/bear/retainment score for all 5 minute intervals of the coins history.
+		'''Calculates bull/bear/change_scorement score for all 5 minute intervals of the coins history.
 		Each 5 minutes simulates running the current score method back in time, with information known only back during the 5minute interval
 		Bull/Bear score indicates how well the current price action performs compared to all histortical candle data
-		Retain_score indicates how likely the current price will retain based on historical data
+		Retain_score indicates how likely the current price will change_score based on historical data
 		If prior historical analysis is present, only the latest data will be computed and appended.'''
 
-		# Get latest candles
-		self.update() # Only updates at most every hour.
-		self.get_candles(symbol.split(self.coin_symbol)[-1], intervals=["5m"]) # update latest 5min data - this will take time due to binance API
+		self.update() # Get latest candles from Binance
+		self.get_candles(symbol.split(self.coin)[-1], intervals=["5m"]) # update latest 5min data - this may take time due to Binance
 		if custom_timeframes:
-			symbol_timeframes = [symbol + '_' + timeframe for timeframe in custom_timeframes] # todo: need to uniquely name csv file based on which timeframes used
+			symbol_timeframes = sorted([symbol + '_' + timeframe for timeframe in custom_timeframes], key= lambda i : Coin.INTERVALS.index(i.split("_")[-1]))
 		else:
 			symbol_timeframes = [symbol + '_' + timeframe for timeframe in self.deafult_scoring_timeframes]
 		
-		# make dataframe to hold all historical 5min intervals. Scores will be inserted at the end
+		# make dataframe to hold all historical 5min intervals (i.e. real time price action from the past). Scores will be inserted at the end
 		csv_filepath = self.coin_path + '/' + symbol + "_5m.csv"
-		columns = ["UTC", "price"]
-		historical_realtime_priceaction_DF = pd.read_csv(csv_filepath, usecols=[0, 4], names=columns, header=None, skiprows=1)
-		bull_scores = []
-		bear_scores = []
-		retain_scores = [] # the degree to which the current price will retain it's price based on history
+		historical_rt_price_DF = pd.read_csv(csv_filepath, usecols=[0, 4], names=["UTC", "price"], header=None, skiprows=1) # store all 5m intervals
+		bull_scores, bear_scores, change_scores = [], [], []
 		timeframe_score_tracker = {}
 		for symbol_timeframe in symbol_timeframes:
 			timeframe_score_tracker[symbol_timeframe + "_BULL"] = []
 			timeframe_score_tracker[symbol_timeframe + "_BEAR"] = []
 
-		# make symbol_timeframes_DF which has columns for UTC-date, open, high, low, close, of all timeframes in symbol_timeframes
-		historical_percent_changes = {}
+		# make symbol_timeframes_DF which has columns for UTC-date, open, high, low, close, of all symbol_timeframes
 		symbol_timeframes_DF = pd.DataFrame()
+		historical_percent_changes = {} # used to act like a dynamically growing analysis_coin.json
 		for symbol_timeframe in symbol_timeframes:
 			csv_filepath = self.coin_path + '/' + symbol_timeframe + '.csv'
 			columns = [symbol_timeframe + "-UTC", symbol_timeframe + "-open", symbol_timeframe + "-high", symbol_timeframe + "-low", symbol_timeframe + "-close"]
@@ -423,80 +398,78 @@ class Coin():
 			historical_percent_changes[symbol_timeframe] = {'candle_change':[], 'candle_max_up':[], 'candle_max_down':[]}
 			symbol_timeframes_DF = symbol_timeframes_DF.merge(right=temp_DF, how="outer", left_index=True, right_index=True)
 
-		# Perform initilisation if no prior historical analysis found, else load from previous data and skip until new data
-		df_positiontracker = {}
+		# Load from previous data and skip until new data, else perform initilisation if no prior historical analysis found (skipping first 3 days due to messness)
+		df_positiontracker = {} # To complement the symbol_timeframes_DF dataframe
 		if os.path.exists(self.coin_path + f"/historical/{symbol}_historical_scoring.csv"):
 			with open(self.coin_path + f"/historical/{symbol}_historical_analysis.json", 'r') as jf:
 				historical_percent_changes = json.load(jf) 
-			skip = pd.read_csv(self.coin_path + f"/historical/{symbol}_historical_scoring.csv").iloc[-1][0] # skip to where the last historical analysis ends
+			skip_UTC = pd.read_csv(self.coin_path + f"/historical/{symbol}_historical_scoring.csv").iloc[-1][0] # skip to where the last historical analysis ends
 			for symbol_timeframe in symbol_timeframes:
-				if symbol_timeframes_DF.index[symbol_timeframes_DF[symbol_timeframe + '-UTC'] >= skip].any():
-					index = symbol_timeframes_DF.index[symbol_timeframes_DF[symbol_timeframe + '-UTC'] >= skip][0] # get first index past skip
+				end_index = symbol_timeframes_DF[symbol_timeframes_DF[symbol_timeframe + '-UTC'].notnull()].shape[0] # get 1 past final index position for symbol_timeframe
+				columns = [symbol_timeframe + "-UTC", symbol_timeframe + "-open", symbol_timeframe + "-high", symbol_timeframe + "-low", symbol_timeframe + "-close"]
+				if symbol_timeframes_DF.index[symbol_timeframes_DF[symbol_timeframe + '-UTC'] >= skip_UTC].any():
+					index = symbol_timeframes_DF.index[symbol_timeframes_DF[symbol_timeframe + '-UTC'] >= skip_UTC][0] - 1 # get index just before skip
 					df_positiontracker[symbol_timeframe] = {
 						"index":index,
-						"open_price":symbol_timeframes_DF.loc[index - 1, [symbol_timeframe + "-open"]][0],
-						"next_UTC": symbol_timeframes_DF.loc[index, [symbol_timeframe + "-UTC"]][0]}
-				else:
-					index = symbol_timeframes_DF[symbol_timeframes_DF[symbol_timeframe + '-UTC'].notnull()].shape[0] - 1 # get final index position
-					df_positiontracker[symbol_timeframe] = {
-						"index":index,
+						"end_index":end_index,
 						"open_price":symbol_timeframes_DF.loc[index, [symbol_timeframe + "-open"]][0],
-						"next_UTC": symbol_timeframes_DF.loc[index, [symbol_timeframe + "-UTC"]][0]}
+						"next_UTC": symbol_timeframes_DF.loc[index + 1, [symbol_timeframe + "-UTC"]][0],
+						"columns": columns}		
+				else: # no new symbol_timeframe candles added since last calculation, hence skip till end
+					df_positiontracker[symbol_timeframe] = {
+						"index":end_index - 1,
+						"end_index":end_index,
+						"open_price":symbol_timeframes_DF.loc[end_index - 1, [symbol_timeframe + "-open"]][0],
+						"next_UTC": symbol_timeframes_DF.loc[end_index - 1, [symbol_timeframe + "-UTC"]][0],
+						"columns": columns}		
 		else:
 			# initialise dataframe and json for the first 3 -> 21 days of price action 
 			if not os.path.exists(self.coin_path + '/historical'):
 				os.mkdir(self.coin_path + '/historical')
 			first_3day_UTC = int(symbol_timeframes_DF.loc[3, [symbol + '_1d-UTC']]) # The first few days of price action are unreliable due to volitility in general
-			skip = int(symbol_timeframes_DF.loc[21, [symbol + '_1d-UTC']]) # UTC date for 21 days of price action
+			skip_UTC = int(symbol_timeframes_DF.loc[21, [symbol + '_1d-UTC']]) # UTC date for 21 days of price action
 			for symbol_timeframe in symbol_timeframes:
 				columns = [symbol_timeframe + "-UTC", symbol_timeframe + "-open", symbol_timeframe + "-high", symbol_timeframe + "-low", symbol_timeframe + "-close"]
-				percent_changes_list = [self.percent_changes(row[1],row[2],row[3],row[4]) for row in symbol_timeframes_DF[columns].to_numpy() if row[0] > first_3day_UTC and row[0] <= skip]
+				percent_changes_list = [self.percent_changes(row[1],row[2],row[3],row[4]) for row in symbol_timeframes_DF[columns].to_numpy() if row[0] > first_3day_UTC and row[0] <= skip_UTC]
 				first_3day_skip = symbol_timeframes_DF.index[symbol_timeframes_DF[symbol_timeframe + '-UTC'] >= first_3day_UTC][0]
 				index = len(percent_changes_list) + first_3day_skip  # location of three week UTC index position in dataframe for each timeframe 
 				df_positiontracker[symbol_timeframe] = {
 					"index":index,
+					"end_index":symbol_timeframes_DF[symbol_timeframes_DF[symbol_timeframe + '-UTC'].notnull()].shape[0],
 					"open_price":symbol_timeframes_DF.loc[index, [columns[1]]][0],
-					"next_UTC": symbol_timeframes_DF.loc[index + 1, [columns[0]]][0]}			
+					"next_UTC": symbol_timeframes_DF.loc[index + 1, [columns[0]]][0],
+					"columns": columns}
 				for metric in historical_percent_changes[symbol_timeframe]:
 					historical_percent_changes[symbol_timeframe][metric] = [row[metric] for row in percent_changes_list]
 					historical_percent_changes[symbol_timeframe][metric].sort()
-		historical_realtime_priceaction_DF = historical_realtime_priceaction_DF.loc[historical_realtime_priceaction_DF.UTC > skip].reset_index().drop("index", axis=1) 
+		historical_rt_price_DF = historical_rt_price_DF.loc[historical_rt_price_DF.UTC > skip_UTC].reset_index().drop("index", axis=1) # skip until lastest calculation
 
-		# Score every 5 minute interval of given coin with information known only during that time - (100 days of price action < 5 seconds)
-		for row in historical_realtime_priceaction_DF.itertuples(name=None): 
-			current_UTC, price, total_bull, total_bear, total_retain = row[1], row[2], 0, 0, 0
+		# Score every 5 minute interval of given coin with information known only during that time - (100 days of price action < 3 seconds)
+		for row in historical_rt_price_DF.itertuples(name=None): 
+			current_UTC, price, total_bull, total_bear, total_change_score = row[1], row[2], 0, 0, 0
 			for symbol_timeframe in symbol_timeframes:
-
 				if current_UTC >= df_positiontracker[symbol_timeframe]["next_UTC"]:
 					index = df_positiontracker[symbol_timeframe]["index"] # get current index
-					final_index = symbol_timeframes_DF[symbol_timeframes_DF[symbol_timeframe + '-UTC'].notnull()].shape[0] # get final index
-					if index + 1 == final_index:
+					end_index = df_positiontracker[symbol_timeframe]["end_index"] # get 1 past final index
+					if index + 1 == end_index:
 						df_positiontracker[symbol_timeframe]["next_UTC"] = float('inf') # Reached the end for this timeframe
 					else:
 						index += 1
-						if index + 1 == final_index:
+						if index + 1 == end_index:
 							next_index, i = index, 0 # second last index for given timeframe
 						else:
 							next_index, i = index + 1, 1
 							
 						# update symbol_timeframe position in dataframe
-						columns = [symbol_timeframe + "-UTC", symbol_timeframe + "-open", symbol_timeframe + "-high", symbol_timeframe + "-low", symbol_timeframe + "-close"]
-						current_symbol_row = symbol_timeframes_DF.loc[index:next_index, columns].values		
-						df_positiontracker[symbol_timeframe] = {
-							"index":index, "open_price":current_symbol_row[0][1],
-							"high_price":current_symbol_row[0][2],
-							"low_price":current_symbol_row[0][3],
-							"close_price":current_symbol_row[0][4],
-							"next_UTC":current_symbol_row[i][0]}						
+						new_row = symbol_timeframes_DF.loc[index:next_index, df_positiontracker[symbol_timeframe]["columns"]].values		
+						df_positiontracker[symbol_timeframe]["index"] = index
+						df_positiontracker[symbol_timeframe]["open_price"] = new_row[0][1]
+						df_positiontracker[symbol_timeframe]["next_UTC"] = new_row[i][0]
 						
 						# update dynamically growing performance ranking json 
-						percent_changes_symboltimeframe = self.percent_changes(
-							df_positiontracker[symbol_timeframe]["open_price"],
-							df_positiontracker[symbol_timeframe]["high_price"],
-							df_positiontracker[symbol_timeframe]["low_price"],
-							df_positiontracker[symbol_timeframe]["close_price"])
+						percent_changes = self.percent_changes(new_row[0][1], new_row[0][2], new_row[0][3], new_row[0][4])
 						for metric in historical_percent_changes[symbol_timeframe]:
-							bisect.insort(historical_percent_changes[symbol_timeframe][metric], percent_changes_symboltimeframe[metric]) # insert value into sorted list
+							bisect.insort(historical_percent_changes[symbol_timeframe][metric], percent_changes[metric]) # insert value into sorted list
 				
 				# calculate score
 				current_percent_change = (price / df_positiontracker[symbol_timeframe]["open_price"])*100 - 100
@@ -504,13 +477,13 @@ class Coin():
 					metric = "candle_max_up"
 				else:
 					metric = "candle_max_down"
-				score, retain_score = self.score_performance(
+				score, change_score = self.score_performance(
 					max_list= historical_percent_changes[symbol_timeframe][metric], 
 					change_list= historical_percent_changes[symbol_timeframe]["candle_change"],
 					size= len(historical_percent_changes[symbol_timeframe][metric]), 
 					absolute_change= abs(current_percent_change), 
 					current_percent_change= current_percent_change)
-				total_retain += retain_score
+				total_change_score += change_score
 				if metric == "candle_max_up":
 					total_bull += score
 					timeframe_score_tracker[symbol_timeframe + "_BULL"].append(score)
@@ -522,23 +495,27 @@ class Coin():
 
 			bull_scores.append(total_bull)
 			bear_scores.append(total_bear)
-			retain_scores.append(total_retain)
+			change_scores.append(total_change_score)
 
 		if os.path.exists(self.coin_path + f"/historical/{symbol}_historical_scoring.csv"):
-			columns = ["bull_scores", "bear_scores", "retain_scores", *[timeframe for timeframe in timeframe_score_tracker]]
-			column_data = [bull_scores, bear_scores, retain_scores, *[timeframe_score_tracker[timeframe] for timeframe in timeframe_score_tracker]]
+			columns = ["bull_scores", "bear_scores", "change_scores", *[timeframe for timeframe in timeframe_score_tracker]]
+			column_data = [bull_scores, bear_scores, change_scores, *[timeframe_score_tracker[timeframe] for timeframe in timeframe_score_tracker]]
 			newdata_DF = pd.DataFrame({column:data for column, data in zip(columns, column_data)})
-			newdata_DF = historical_realtime_priceaction_DF.merge(right=newdata_DF, how="outer", left_index=True, right_index=True)
+			newdata_DF = historical_rt_price_DF.merge(right=newdata_DF, how="outer", left_index=True, right_index=True)
 			newdata_DF.to_csv(self.coin_path + f"/historical/{symbol}_historical_scoring.csv", mode='a', header=False, index=False)
 		else:
-			historical_realtime_priceaction_DF.insert(2, "bull_scores", bull_scores)
-			historical_realtime_priceaction_DF.insert(3, "bear_scores", bear_scores)
-			historical_realtime_priceaction_DF.insert(4, "retain_scores", retain_scores)
-			[historical_realtime_priceaction_DF.insert(5, timeframe, timeframe_score_tracker[timeframe]) for timeframe in timeframe_score_tracker]
-			historical_realtime_priceaction_DF.to_csv(self.coin_path + f"/historical/{symbol}_historical_scoring.csv", index=False)
+			historical_rt_price_DF.insert(2, "bull_scores", bull_scores)
+			historical_rt_price_DF.insert(3, "bear_scores", bear_scores)
+			historical_rt_price_DF.insert(4, "change_scores", change_scores)
+			[historical_rt_price_DF.insert(5, timeframe, timeframe_score_tracker[timeframe]) for timeframe in timeframe_score_tracker]
+			historical_rt_price_DF.to_csv(self.coin_path + f"/historical/{symbol}_historical_scoring.csv", index=False)
 		
 		with open(self.coin_path + f"/historical/{symbol}_historical_analysis.json", 'w') as jf:
 			json.dump(historical_percent_changes, jf, indent=4) 
+
+
+	def retain_score(self):
+		pass #TODO
 
 
 	@staticmethod
@@ -546,7 +523,7 @@ class Coin():
 		'''Scoring method. Determines what rank the current price action holds against historical data
 		If the performance is greater than the top 75% of price action history, then it can obtain some score.'''
 
-		score, retain = 0, 0
+		score, change_score = 0, 0
 		if absolute_change >= max_list[int(size * 0.75)]: 
 			if absolute_change <= max_list[int(size * 0.8)]:
 				score = 1
@@ -561,30 +538,30 @@ class Coin():
 			else:
 				score = 6
 			if current_percent_change > 0 and current_percent_change >= change_list[int(size * 0.9)]:
-				retain = 1
+				change_score = 1
 				if current_percent_change <= change_list[int(size * 0.95)]:
-					retain = 2
+					change_score = 2
 				elif current_percent_change <= change_list[int(size * 0.97)]:
-					retain = 3
+					change_score = 3
 				elif current_percent_change <= change_list[int(size * 0.98)]:
-					retain = 4
+					change_score = 4
 				elif current_percent_change <= change_list[int(size * 0.99)]:
-					retain = 5
+					change_score = 5
 				else:
-					retain = 6
+					change_score = 6
 			elif current_percent_change < 0 and current_percent_change <= change_list[int(size * 0.1)]:
-				retain = 1
+				change_score = 1
 				if current_percent_change >= change_list[int(size * 0.05)]:
-					retain = 2
+					change_score = 2
 				elif current_percent_change >= change_list[int(size * 0.03)]:
-					retain = 3
+					change_score = 3
 				elif current_percent_change >= change_list[int(size * 0.02)]:
-					retain = 4
+					change_score = 4
 				elif current_percent_change >= change_list[int(size * 0.01)]:
-					retain = 5
+					change_score = 5
 				else:
-					retain = 6
-		return score, retain
+					change_score = 6
+		return score, change_score
 
 
 	@staticmethod
@@ -610,14 +587,11 @@ class Coin():
 	@staticmethod
 	def percent_changes(candle_open, candle_high, candle_low, candle_close):
 		'''Returns % change, % amplitude, max % up, max % down of a given candle'''
-		
-		candle_change = (candle_close / candle_open)*100 - 100
-		candle_amplitude = (candle_high / candle_low)*100 - 100
-		candle_max_up = (candle_high / candle_open)*100 - 100 
-		candle_max_down = abs((candle_low / candle_open)*100 - 100)
 
-		return {'candle_change':round(candle_change, 1), 'candle_amplitude':round(candle_amplitude, 1),
-		'candle_max_up':round(candle_max_up, 1), 'candle_max_down':round(candle_max_down, 1)}
+		return {'candle_change':round((candle_close / candle_open)*100 - 100, 1),
+				'candle_amplitude':round((candle_high / candle_low)*100 - 100, 1),
+				'candle_max_up':round((candle_high / candle_open)*100 - 100, 1),
+				'candle_max_down':round(abs((candle_low / candle_open)*100 - 100), 1)}
 
 
 	@staticmethod
@@ -636,10 +610,10 @@ class Coin():
 		pass
 		
 		# make a graph which shows the profit/loss from selling/buying 1h, 4h, 1day, 2day, 3day, 1week from each pair
-		# This notifications will be based on: first calculating the current bull/bear score + retain score, then seeing how those scores compare with
+		# This notifications will be based on: first calculating the current bull/bear score + change_score score, then seeing how those scores compare with
 		# the historical scores, if the current score is the highest among all previous scores, then clearly it's a big deal
 		# stanard variable naming
-		# BTC == coin_symbol
+		# BTC == coin
 		# USDT == trading_pair
 		# 4h == timeframe
 		# BTCUSDT == symbol
@@ -648,7 +622,7 @@ class Coin():
 	def graph_historical_data(self, mode):
 		# Do this using matplotlib/pandas
 		# Two graphs, Bull and bear: have top 15 scores (i.e. score 30 -> 15) as x_axis, for each one, have three virticle bars
-			# incorporate the retain_score, the higher the retain_score - e.g. 30 score would be basically never in history
+			# incorporate the change_score, the higher the change_score - e.g. 30 score would be basically never in history
 			# has the price close at this price% change accross all timeframes - thus indicating it's very, very likely to go in the opposite direction.
 		# where bar1 == profit made from selling after 1h, bar2 profit made from selling after 12h, bar3 profit made after selling 1day etc.
 		# so the Y axis is profit 
@@ -677,5 +651,8 @@ class Coin():
 
 		# The server will regularly compute the current score -> compare the score with historical scores, if the score is in say the top 5%, it will notify user
 		# and generate graph, which will show the likely hood of profit/gain (for 1h, 1d, 3d etc.) if you were to buy/sell now 
-		# Using the bull/bear score combined with retainment score
+		# Using the bull/bear score combined with change_scorement score
 		pass
+
+# coin = Coin('INJ')
+# coin.compute_historical_score('INJUSDT')
