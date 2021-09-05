@@ -73,28 +73,28 @@ class Notification_server():
     def server_welcome(self):
         '''Server welcome'''
 
-        print(f'Server has been initiated!')
-        print(f'Server is ready to intake commands. Type "commands" to view avaliable commands:')
-        print(f'Enter command "notify" to commence server gmail notification service')
-        print(f'Enter command "post" to receive your chosen coin scores and summaries\n')
+        print(f"Server has been initiated!")
+        print(f"Server is ready to intake commands. Type 'commands' to view avaliable commands:")
+        print(f"Enter command 'notify' to commence server gmail notification service")
+        print(f"Enter command 'post' to receive your chosen coin scores and summaries\n")
 
 
     def server_commands(self):
         '''Prints description of each server command'''
 
-        print(f'\nList of commands:')
+        print(f"\nList of commands:")
         print('='*130)
-        print(f'<commands>: Returns list of commands with description.')
-        print(f'<monitor>: Allows user to add new multiple new coins, tradingpairs and timeframes to monitor.')
-        print(f'<monitoring>: Server returns all coins it is currently monitoring.')
-        print(f'<all>: Server will start monitoring all coins, tradingpairs and timeframes stored in the local database.')
-        print(f'<drop>: Allows user to drop specific coins, tradingpairs and timeframes from monitoring or database.')
-        print(f'<post>: Server will stdout the latest coin score and json.')            
-        print(f'<stdout>: Toggles server stdout between periodic and OFF - server starts off in OFF state.')
-        print(f'<server_speed>: Allows user to modify server tick speed.')
-        print(f'<request_interval>: Allows user to modify server communication interval with Binance for candle retreival (deafult 1 minute).')
-        print(f'<notify>: Starts up the server notification mailing service. If first time, this will start the initialisation process.')
-        print(f'<quit>: Shuts down server activity.')
+        print(f"<commands>: Returns list of commands with description.")
+        print(f"<monitor>: Allows user to add new multiple new coins, tradingpairs and timeframes to monitor.")
+        print(f"<monitoring>: Server returns all coins it is currently monitoring.")
+        print(f"<all>: Server will start monitoring all coins, tradingpairs and timeframes stored in the local database.")
+        print(f"<drop>: Allows user to drop specific coins, tradingpairs and timeframes from monitoring or database.")
+        print(f"<post>: Server will stdout the latest coin score and json.")            
+        print(f"<stdout>: Toggles server stdout between periodic and OFF - server starts off in OFF state.")
+        print(f"<server_speed>: Allows user to modify server tick speed.")
+        print(f"<request_interval>: Allows user to modify server communication interval with Binance for candle retreival (deafult 1 minute).")
+        print(f"<notify>: Starts up the server notification mailing service. If first time, this will start the initialisation process.")
+        print(f"<quit>: Shuts down server activity.")
         print('='*130 + '\n')
 
 
@@ -127,11 +127,11 @@ class Notification_server():
                 elif user_input == 'notify':
                     self.notification_init()
                 elif user_input == 'debug':
-                    print(f'Server instruction settings are:\n{self.SERVER_INSTRUCTION}')
+                    print(f"Server instruction settings are:\n{self.SERVER_INSTRUCTION}")
                     self.debug()
             else:
-                print(f'{user_input} is an invalid server command.')
-                print(f'Enter "commands" to view all avaliable commands.')
+                print(f"{user_input} is an invalid server command.")
+                print(f"Enter 'commands' to view all avaliable commands.")
 
 
     def add_to_monitoring(self, coin=None, input_dict={}):
@@ -156,22 +156,22 @@ class Notification_server():
                         if coin_obj.get_candles(tradingpair=tradingpair, intervals=timeframes):
                             pass # Binance succesfully returned candles for coin-tradingpair/timeframe.
                         else:
-                            print(f'{coin}{tradingpair} is not avaliable on Binance.')
+                            print(f"{coin}{tradingpair} is not avaliable on Binance.")
                             continue # Binance rejected request.
                     elif coin_obj.get_candles(tradingpair='USDT', intervals=deafult_timeframes):
                         tradingpair = 'USDT' # No tradingpair specified so deafult tradingpair assigned to coin.
-                        print(f'\nServer will monitor {coin}USDT by deafult.')
+                        print(f"\nServer will monitor {coin}USDT by deafult.")
                     else:
-                        print(f'{coin} is not avaliable on Binance.')
+                        print(f"{coin} is not avaliable on Binance.")
                         continue # This means coin provided is invalid for Binance.
                 elif tradingpair != 'NA':
                     # Server has local storage of coin.
                     if coin_obj.get_candles(tradingpair=tradingpair, intervals=timeframes):
                         pass # This either added a new tradingpair or updated the existing stored one.
                     else:
-                        print(f'{coin}{tradingpair} is not avaliable on Binance.')
+                        print(f"{coin}{tradingpair} is not avaliable on Binance.")
                         continue # This means newly entered tradingpair is invalid for Binance. 
-                print(f'Server will start monitoring {coin}{tradingpair}.\n') if tradingpair != 'NA' else print(f'Server will start monitoring {coin}.\n')
+                print(f"Server will start monitoring {coin}{tradingpair}.\n") if tradingpair != 'NA' else print(f"Server will start monitoring {coin}.\n")
                 added_coins.add(coin)
 
                 # Add coin to server monitoring list
@@ -216,7 +216,7 @@ class Notification_server():
                     for pair in clone_MONITORED_COINS:
                         if item_to_drop[1:] == pair or item_to_drop[1:] in pair:
                             self.MONITORED_COINS[coin].remove(pair)
-                    print(f'The following has been dropped: {item_to_drop[1:]}')
+                    print(f"The following has been dropped: {item_to_drop[1:]}")
                     if '1' == item_to_drop[0] or len(self.MONITORED_COINS[coin]) == 0:
                         self.MONITORED_COINS.pop(coin)
                         return 0 # Drop this coin thread.
@@ -242,10 +242,10 @@ class Notification_server():
                 if bull_score > previous_bull_score or bear_score > previous_bear_score:
                     if coin_score[1] >= self.BULL_THRESHOLD:
                         coin_obj.generate_result_files(mode='signal') # Generate/replace signal graph/csv files in server_mail/outgoing for users to send
-                        self.MODE_1_MESSAGES[coin] = f'BULL_{self.BULL_THRESHOLD}' # Send message to all users subscribed to this coin
+                        self.MODE_1_MESSAGES[coin] = f"BULL_{self.BULL_THRESHOLD}" # Send message to all users subscribed to this coin
                     elif coin_score[2] >= self.BEAR_THRESHOLD:
                         coin_obj.generate_result_files(mode='signal')
-                        self.MODE_1_MESSAGES[coin] = f'BEAR_{self.BEAR_THRESHOLD}' 
+                        self.MODE_1_MESSAGES[coin] = f"BEAR_{self.BEAR_THRESHOLD}" 
 
                 if self.MODE_2_REQUEST:
                     coin_obj.generate_result_files(mode='update')
@@ -259,18 +259,18 @@ class Notification_server():
         if stored:
             for coin_path in glob(self.data_path + '/*'):
                 coin = coin_path.split('/')[-1]
-                coins_dict[coin] = [tradingpair.split('/')[-1][:-4] for tradingpair in glob(coin_path + f"/{coin}*")]
+                coins_dict[coin] = [tradingpair.split('/')[-1][:-4] for tradingpair in glob(f"{coin_path}/{coin}*")]
         else:
             coins_dict = self.MONITORED_COINS.copy()
 
         if coins_dict:
             if stored:
-                print(f'Server has the following pairs in the database:')
+                print(f"Server has the following pairs in the database:")
             else:
-                print(f'Server is currently monitoring:')
+                print(f"Server is currently monitoring:")
 
             for coin in coins_dict:
-                print(f'coin {coin}:')
+                print(f"coin {coin}:")
                 tradingpairs = {}
                 for symbol_timeframe in coins_dict[coin]:
                     tradingpair = symbol_timeframe.split('_')[0]
@@ -284,7 +284,7 @@ class Notification_server():
             print('')
             
         else:
-            print(f'Server has no stored or monitored coins. Enter command "monitor" to add new coins.')
+            print(f"Server has no stored or monitored coins. Enter command 'monitor' to add new coins.")
 
     def monitor_all_coins(self, coins=None):
         '''Hanndles server coin monitoring initiation and 'all' command'''
@@ -347,13 +347,13 @@ class Notification_server():
                     if message[-1] == "coin_score":
                         max_potential_score = message[4] * 6
                         print('\n\n' + '='*130)
-                        print(f'\nCoin {message[0]} monitoring update:')
-                        print(f'Overview:')
+                        print(f"\nCoin {message[0]} monitoring update:")
+                        print(f"Overview:")
                         print(json.dumps(message[6], indent=4))
                         print(f"\nCurrent price: {message[5]}")
-                        print(f'Bull score: {message[1]} out of {max_potential_score}')
-                        print(f'Bear score: {message[2]} out of {max_potential_score}')
-                        print(f'%Change score: {message[3]} out of {max_potential_score}')
+                        print(f"Bull score: {message[1]} out of {max_potential_score}")
+                        print(f"Bear score: {message[2]} out of {max_potential_score}")
+                        print(f"%Change score: {message[3]} out of {max_potential_score}")
                         print('='*130 + '\n\n')
                 self.SERVER_INSTRUCTION['post'] = 0
 
@@ -379,12 +379,12 @@ class Notification_server():
             words.extend([' (second)', 'tick speed'])
 
         self.SERVER_INSTRUCTION['pause'] = 1
-        user_input = input(f'Please input a positive integer{words[0]} for new server {words[1]}: ')
+        user_input = input(f"Please input a positive integer{words[0]} for new server {words[1]}: ")
         self.SERVER_INSTRUCTION['pause'] = 0
         try:
             user_input = int(user_input)
             if user_input > 0:
-                print(f'Server {words[1]} updated to {user_input}{words[0]}.') 
+                print(f"Server {words[1]} updated to {user_input}{words[0]}.") 
                 if timer == 'request_interval':
                     self.REQUEST_INTERVAL = user_input * 60
                 elif timer == 'server_speed':
@@ -392,7 +392,7 @@ class Notification_server():
                 return 1
         except ValueError:
             pass
-        print(f'{user_input} is an invalid entry. Please input a positive integer.')
+        print(f"{user_input} is an invalid entry. Please input a positive integer.")
 
     def boost_speed(self, boost):
         '''Thread which toggles server speed from normal to responsive'''
@@ -417,7 +417,7 @@ class Notification_server():
         print('='*10 + 'INSTRUCTIONS' + '='*10)
         print('>>> If multiple, seperate by spaces')
         print('>>> Enter coin(s) to monitor, choose their respective tradingpair(s) and Optionally list their timeframe(s)')
-        print(f'>>> If no tradingpairs are entered, deafult timeframes will be used: {deafult_timeframes}')
+        print(f">>> If no tradingpairs are entered, deafult timeframes will be used: {deafult_timeframes}")
            
         while True:
             coins = str(input('Input coins: ')).upper() # TODO Make this also handle mail requests 
@@ -433,7 +433,7 @@ class Notification_server():
 
         for coin in input_coin_dict:
             while True:
-                tradingpairs = str(input(f'Input {coin} trading pairs: ')).upper() 
+                tradingpairs = str(input(f"Input {coin} trading pairs: ")).upper() 
                 if self.re_search(tradingpairs):
                     continue
                 break
@@ -453,18 +453,18 @@ class Notification_server():
 
                 if input_coin_dict[coin][tradingpair]:
                     # This means coin is currently being monitored by server. User can add aditional trading pairs or timeframes.
-                    print(f'Server currently monitoring {coin + tradingpair} with timeframes: {input_coin_dict[coin][tradingpair]}')
+                    print(f"Server currently monitoring {coin + tradingpair} with timeframes: {input_coin_dict[coin][tradingpair]}")
                 else:
                     # This means coin entered is currently not being monitored by server (although it could be in the database). 
                     inspect_coin = Coin(coin) 
                     stored_timeframes = inspect_coin.get_timeframes(coin + tradingpair)
                     if stored_timeframes:
                         # This means server is not currently monitoring this tradingpair, however has its timeframes stored in database.
-                        print(f'Server will start monitoring {coin + tradingpair} with stored timeframes: {stored_timeframes}')   
+                        print(f"Server will start monitoring {coin + tradingpair} with stored timeframes: {stored_timeframes}")   
                         input_coin_dict[coin][tradingpair] = stored_timeframes   
                     else:
                         # This means server does not have any timeframes of this coin/trading pair stored. Deafult timeframes will be monitored.
-                        print(f'Server will start monitoring {coin + tradingpair} with deafult timeframes: {deafult_timeframes}')
+                        print(f"Server will start monitoring {coin + tradingpair} with deafult timeframes: {deafult_timeframes}")
                         input_coin_dict[coin][tradingpair] = deafult_timeframes.copy()
 
                 while True:
@@ -519,7 +519,7 @@ class Notification_server():
                 to_drop.add(coin)
                 continue # Skip rest of user input interaction. 
             while True:
-                tradingpairs = str(input(f'Input {coin} trading pairs: ')).upper() 
+                tradingpairs = str(input(f"Input {coin} trading pairs: ")).upper() 
                 if self.re_search(tradingpairs):
                     continue
                 tradingpairs = tradingpairs.split(' ')
@@ -534,7 +534,7 @@ class Notification_server():
 
             for tradingpair in input_coin_dict[coin]:
                 while True:
-                    timeframes = str(input(f'Input {coin + tradingpair} timeframes: '))
+                    timeframes = str(input(f"Input {coin + tradingpair} timeframes: "))
                     if self.re_search(timeframes):
                         continue
                     if not re.search('[^ ]', timeframes):
@@ -557,7 +557,7 @@ class Notification_server():
         for item in to_drop:
             item = item.replace('-DROP', '')
             item = item.split('_')
-            print(f'SERVER drop self.SERVER_INSTRUCTION will be {item}') #TODO remove
+            print(f"SERVER drop self.SERVER_INSTRUCTION will be {item}") #TODO remove
             if len(item) == 1:
                 self.SERVER_INSTRUCTION['drop'] = '1' + item[0]
                 while self.SERVER_INSTRUCTION['drop']:
@@ -577,11 +577,11 @@ class Notification_server():
     def re_search(string):
         '''Performs search for invalid symbols'''
         if re.search('[,.|!~`@#$%^&*():;/_=+\[\]\{\}]', string):
-            print(f'Invalid characters used in {string}.')
+            print(f"Invalid characters used in {string}.")
             return 1
         if re.search('-', string):
             if not re.search('-drop', string, re.IGNORECASE):
-                print(f'Invalid characters used in {string}.')
+                print(f"Invalid characters used in {string}.")
                 return 1
 
 
@@ -605,7 +605,7 @@ class Notification_server():
         for coin in self.SERVER_USERS[gmail]['coins']:
             Previous_scores[coin] = 0 
 
-        Thread(target=self.server_user_mode_2_message_handler, name=f'server_user_message_handler_{username}', args=(self.SERVER_USERS[gmail],), daemon=True).start()
+        Thread(target=self.server_user_mode_2_message_handler, name=f"server_user_message_handler_{username}", args=(self.SERVER_USERS[gmail],), daemon=True).start()
 
         while True:
             if self.MODE_1_MESSAGES: # Checks for any signals (due to a coin passing their threshold) - Note, these messages get cleared elsewhere above.
@@ -617,10 +617,10 @@ class Notification_server():
                     if coin in self.SERVER_USERS[gmail]['coins'] and (user_thresold == 'ML' or score >= user_thresold):
                         if score < Previous_scores[coin]:
                             continue 
-                        subject = f'SIGNAL ALERT: {coin} passed {mood}ish threshold!'
-                        details = (f'{subject} SCORE: {score}#These events are rare and usually a good time to perform a swing trade.#'
+                        subject = f"SIGNAL ALERT: {coin} passed {mood}ish threshold!"
+                        details = (f"{subject} SCORE: {score}#These events are rare and usually a good time to perform a swing trade.#"
                                     'The summary excel and historical score vs performance graphs have been attached to assist in your descision.')
-                        files = ','.join(glob(self.root_path + f'/server_mail/outgoing/{coin}_SIGNAL*'))
+                        files = ','.join(glob(f"{self.root_path}/server_mail/outgoing/{coin}_SIGNAL*"))
                         message = {'user':gmail, 'title':subject, 'details':details, 'files':files}
                         self.OUTGOING_MESSAGES[username] = message # Send mode1 email.
             
@@ -645,13 +645,13 @@ class Notification_server():
             update_message_timer = user_dict['update_interval'] * 3600 # seconds.
             gmail = user_dict['gmail']
             coins = user_dict['coins']
-            subject = f'UPDATE for coins {coins}'
-            details = (f'This is a periodic update email containing csv and graph data on your monitored coins.#'
-                        f'Your coins are: {coins}#'
-                        f'The next update will send in {update_message_timer/3600} hours.#'
+            subject = f"UPDATE for coins {coins}"
+            details = (f"This is a periodic update email containing csv and graph data on your monitored coins.#"
+                        f"Your coins are: {coins}#"
+                        f"The next update will send in {update_message_timer/3600} hours.#"
                         'To scilence this type of message, email this address the command "silence".#' 
                         'To modify how often this type of message sends, email this address "update-X"')
-            files = ','.join([','.join(file_group) for file_group in [glob(self.root_path + f'/server_mail/outgoing/{coin}_UPDATE*') for coin in coins] if file_group != []])
+            files = ','.join([','.join(file_group) for file_group in [glob(f"{self.root_path}/server_mail/outgoing/{coin}_UPDATE*") for coin in coins] if file_group != []])
             message = {'user':gmail, 'title':subject, 'details':details, 'files':files}
             self.MODE_2_MESSAGES[gmail] = message
             
@@ -693,7 +693,7 @@ class Notification_server():
         if self.postfix_init:
             pass 
         else:
-            print(f'Please run the "notify" command before trying to modify notifcation settings')
+            print(f"Please run the 'notify' command before trying to modify notifcation settings")
 
 
     def notification_send_gmail(self):
@@ -702,7 +702,7 @@ class Notification_server():
         while self.postfix_init:
             while self.OUTGOING_MESSAGES:
                 to_send = self.OUTGOING_MESSAGES.copy()
-                print(f'self.OUTGOING_MESSAGES is: {self.OUTGOING_MESSAGES}')
+                print(f"self.OUTGOING_MESSAGES is: {self.OUTGOING_MESSAGES}")
                 self.tickspeed_handler.wait()
                 for user in to_send:
                     self.OUTGOING_MESSAGES.pop(user)
@@ -711,7 +711,7 @@ class Notification_server():
                     if sendmail_process.returncode == 0:
                         continue
                     else:
-                        print(f'Error: message for {user} did not send, script returned exit {sendmail_process.returncode}.')
+                        print(f"Error: message for {user} did not send, script returned exit {sendmail_process.returncode}.")
             self.tickspeed_handler.wait()
 
 
@@ -752,9 +752,9 @@ class Notification_server():
 
         print('\nServer is currently running the following threads:\n')
         [print('Thread: ' + str(thread).split(',')[0].split('(')[1]) for thread in list_threads()]
-        print(f'\nServer instructions are set as: \n{self.SERVER_INSTRUCTION}')
-        print(f'Server tick speed: {self.SERVER_SPEED}')
-        print(f'Server interval speed: {self.REQUEST_INTERVAL}')
+        print(f"\nServer instructions are set as: \n{self.SERVER_INSTRUCTION}")
+        print(f"Server tick speed: {self.SERVER_SPEED}")
+        print(f"Server interval speed: {self.REQUEST_INTERVAL}")
 
 
     def shutdown_server(self):
