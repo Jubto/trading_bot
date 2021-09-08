@@ -1,4 +1,3 @@
-from numpy.core.fromnumeric import mean
 from binance.client import Client # Third party 
 from binance.exceptions import BinanceAPIException # Third party 
 from config import API_KEY, API_SECRET
@@ -6,6 +5,9 @@ from glob import glob
 from time import time
 from datetime import datetime
 from collections import defaultdict
+from statistics import stdev
+from numpy import nan, arange
+import matplotlib.pyplot as plt
 import pandas as pd
 import bisect
 import json 
@@ -24,7 +26,7 @@ __Symbol_timeframe  = INJUSDT_5m
 '''
 
 #https://python-binance.readthedocs.io/en/latest/market_data.html#id7
-client = Client(API_KEY, API_SECRET) 
+client = Client(API_KEY, API_SECRET) # TODO consider making this in the server, then passing it by reference as arg for coin.methods
 
 
 # make different coin objects, e.g. INJ, BTC, FTM etc. 
@@ -129,7 +131,7 @@ class Coin():
 					csvfile.write(f"{0:0106}") # Temporary empty row for header.
 				else:
 					with open(file_path, 'a', newline='') as csvfile_temp:
-						pointer = csvfile_temp.tell()
+						pointer = csvfile_temp.tell() # number of bytes to end of csv, used for skipping to end of csv
 					header = csvfile.readline()
 					num_rows = num_rows + int(header.split(',')[1].lstrip('0'))
 					csvfile.seek(0)
@@ -348,9 +350,12 @@ class Coin():
 					current_percent_change= current_change)
 
 				# Construct current scoring summary dict to send to server
-				if amp_score:
+				if amp_score > 0:
 					historical_average = self.average(coin_data[symbol][timeframe]["candle_amplitude"])
 					score_dict[symbol][timeframe]["candle_amplitude"] = f"Score: {amp_score} | Change: {amplitude_change}% | average: {historical_average}%"
+				elif amp_score < 0:
+					historical_average = self.average(coin_data[symbol][timeframe]["candle_amplitude"])
+					score_dict[symbol][timeframe]["candle_amplitude"] = f"Unusually small amplitude | Change: {amplitude_change}% | average: {historical_average}%"
 				else:
 					score_dict[symbol][timeframe]["candle_amplitude"] = 'AVERAGE' # Means current price action is bellow the top 75% of history, i.e. not important
 				
@@ -518,16 +523,15 @@ class Coin():
 			json.dump(historical_percent_changes, jf, indent=4) 
 
 
-	def look_ahead_gains(self, symbol, custom_timeframes = [], custom_filename = ""):
+	def look_ahead_gains(self, symbol, custom_timeframes = [], peak_start_only = False, custom_filename = "", custom_csv_filename = ""):
 		'''Searches through specificed historical_scoring csv to find bull/bear score peaks over a certain thresold.
-		Once found, it calculates the % difference of if you sold/bought after 30min, 1h, 4h, 1d, 3d, 1w.
+		Once found, it calculates the % difference of if you sold/bought after 30min, 1h, 4h, 1d, 3d, 1w, 2w.
 		Saves the data in 'look_ahead_gains.csv'
 		'''
 
 		# self.compute_historical_score(symbol, custom_timeframes, custom_filename)
-
-		threshold_score = int(0.5 * (len(custom_timeframes) * 6)) if custom_timeframes else int(0.5 * (len(self.deafult_scoring_timeframes) * 6))
-		historical_score_csv = f"{self.coin_path}/historical/{symbol}_historical_scoring{custom_filename}.csv"
+		threshold_score = int(0.5 * (len(custom_timeframes) * 6)) if custom_timeframes else int(0.5 * (len(self.deafult_scoring_timeframes) * 6)) #TODO make 0?
+		historical_score_csv = f"{self.coin_path}/historical/{symbol}_historical_scoring{custom_csv_filename}.csv"
 		look_ahead_gains_csv = f"{self.coin_path}/historical/{symbol}_look_ahead_gains{custom_filename}.csv"
 		historical_scoring_DF = pd.read_csv(historical_score_csv, usecols=[0, 1, 2, 3, 4], index_col= 0, header=None, skiprows=1)
 
@@ -535,7 +539,8 @@ class Coin():
 			retain_csv_writer = csv.writer(outfile)
 			skip_UTS = historical_scoring_DF.index[0]
 			if (outfile.tell() == 0):
-				retain_csv_writer.writerow(["UTC", "price", "peak_start", "peak_top", "change_score", "goal", "%diff_30min", "%diff_1h", "%diff_4h", "%diff_1d", "%diff_3d", "%diff_1w", "UTS"])
+				retain_csv_writer.writerow(["UTC", "price", "peak_start", "peak_top", "change_score", "goal",
+											"%diff_30min", "%diff_1h", "%diff_4h", "%diff_1d", "%diff_3d", "%diff_1w", "%diff_2w", "UTS"])
 			else:
 				infile.seek(outfile.tell() - 15) # skip to end of file, capture last UTS
 				skip_UTS = infile.readline()
@@ -544,20 +549,20 @@ class Coin():
 			peak = 0
 			peak_row = ()
 			look_ahead = 12 # 12 iteration, where each iteration is 5min, so 1 hour look ahead
-			best_prices = {6:0, 12:0, 48:0, 144:0, 288:0, 864:0, 2016:0} # key: look ahead time in 5min intervals, value: percentage diff
+			best_prices = {6:0, 12:0, 48:0, 144:0, 288:0, 864:0, 2016:0, 4032:0} # key: look ahead time in 5min intervals, value: percentage diff
 
 			for row in historical_scoring_DF.loc[skip_UTS:].itertuples(name=None):
 				score = int((max(row[2:4])))
 				if peak_start:
-					if score > peak:
+					if not peak_start_only and score > peak: # and not peakstart only
 						peak, peak_row = score, row
 						look_ahead = 12
 					else:
 						look_ahead -= 1
-						if not look_ahead:
+						if not look_ahead or (peak_start_only and peak_start > score): # or peakstart only
 							best_price = float(peak_row[1])
 							goal = "buy_back" if peak_row[2] > peak_row[3] else "sell_later"
-							for row_look_ahead in historical_scoring_DF.loc[peak_row[0]:(peak_row[0] + 300000*2016)].itertuples(name=None):
+							for row_look_ahead in historical_scoring_DF.loc[peak_row[0]:(peak_row[0] + 300000*4032)].itertuples(name=None):
 								look_ahead += 1
 								look_ahead_price = float(row_look_ahead[1])
 								
@@ -570,15 +575,16 @@ class Coin():
 
 								if look_ahead in best_prices:
 									best_prices[look_ahead] = int((best_price / peak_row[1]) * 100)
-									# print(f"{goal}: UTS {peak_row[0]}:: look_ahead: {look_ahead}, orig price: {peak_row[1]}, best price: {best_price}, lookaheadprice: {look_ahead_price} === diff: {best_prices[look_ahead]}")
 									best_price = look_ahead_price
-							utc_time = datetime.utcfromtimestamp(int(str(peak_row[0])[:-3])).strftime('%d-%m-%Y %H:%M:%S')
+							utc_time = datetime.utcfromtimestamp(int(str(peak_row[0])[:-3])).strftime('|%d-%m-%Y %H:%M:%S|')
 							retain_csv_writer.writerow([utc_time, peak_row[1], peak_start, peak, peak_row[-1], goal, *[diff for diff in best_prices.values()], peak_row[0]])
 							look_ahead = 12
 							peak_start, peak = 0, 0
 		
 				elif score >= threshold_score:
 					peak_start, peak, peak_row = score, score, row
+					if peak_start_only:
+						look_ahead = 0
 
 
 	def retain_score(self, symbol, custom_filename = ""):
@@ -588,55 +594,115 @@ class Coin():
 		retain_score_csv = f"{self.coin_path}/historical/{symbol}_retain_scoring{custom_filename}.csv"
 		look_ahead_gains_csv = f"{self.coin_path}/historical/{symbol}_look_ahead_gains{custom_filename}.csv"
 		if not os.path.exists(look_ahead_gains_csv):
-			return f"No look_ahead_gains_csv {look_ahead_gains_csv} exists, please first run the Coin.look_ahead_gains method."
+			return f"No look_ahead_gains.csv {look_ahead_gains_csv} exists, please first run the Coin.look_ahead_gains method."
 
 		bullscore_bestgain = defaultdict(list) # key = score, value = list of best %gains
 		bearscore_bestgain = defaultdict(list)
-		average_bestgain = {"buy_back":{"30m":[], "1h":[], "4h":[], "1d":[], "3d":[], "1w":[]},
-							"sell_later":{"30m":[], "1h":[], "4h":[], "1d":[], "3d":[], "1w":[]}}
+		average_bestgain = {"buy_back":{"30m":[], "1h":[], "4h":[], "1d":[], "3d":[], "1w":[], "2w":[]},
+							"sell_later":{"30m":[], "1h":[], "4h":[], "1d":[], "3d":[], "1w":[], "2w":[]}}
 
 		with open(look_ahead_gains_csv, 'r') as infile, open(retain_score_csv, 'w') as outfile:
-			retain_csv_reader = csv.reader(infile)
+			lookahead_csv_reader = csv.reader(infile)
 			
-			next(retain_csv_reader)
-			for row in retain_csv_reader:
+			next(lookahead_csv_reader)
+			for row in lookahead_csv_reader:
+				index = 6
 				if row[5] == "buy_back":
 					bullscore_bestgain[int(row[3])].append(min([int(i) for i in row[6:-1]]))
-					average_bestgain["buy_back"]["30m"].append(int(row[6]))
-					average_bestgain["buy_back"]["1h"].append(int(row[7]))
-					average_bestgain["buy_back"]["4h"].append(int(row[8]))
-					average_bestgain["buy_back"]["1d"].append(int(row[9]))
-					average_bestgain["buy_back"]["3d"].append(int(row[10]))
-					average_bestgain["buy_back"]["1w"].append(int(row[11]))
+					for look_ahead in average_bestgain["buy_back"]:
+						average_bestgain["buy_back"][look_ahead].append(int(row[index]))
+						index += 1
 				else:
 					bearscore_bestgain[int(row[3])].append(max([int(i) for i in row[6:-1]]))
-					average_bestgain["sell_later"]["30m"].append(int(row[6]))
-					average_bestgain["sell_later"]["1h"].append(int(row[7]))
-					average_bestgain["sell_later"]["4h"].append(int(row[8]))
-					average_bestgain["sell_later"]["1d"].append(int(row[9]))
-					average_bestgain["sell_later"]["3d"].append(int(row[10]))
-					average_bestgain["sell_later"]["1w"].append(int(row[11]))
+					for look_ahead in average_bestgain["sell_later"]:
+						average_bestgain["sell_later"][look_ahead].append(int(row[index]))
+						index += 1
 
-			outfile.write("Bull scores: % reduction of coin price if you were to have sold at this score (hence you want to buy back)\n")
+			outfile.write("Bull scores:\n" + "="*130 + "\n%reduction of coin price if you were to have sold at this score peak (hence you want to buy back)\n")
 			for score in sorted(bullscore_bestgain.keys()):
-				outfile.write(f"{score}: Average = {mean(bullscore_bestgain[score]):.2f}%, {bullscore_bestgain[score]}\n")
+				outfile.write(f"{score}: Average = {self.average(bullscore_bestgain[score], 2):.2f}%, {bullscore_bestgain[score]}\n")
 			outfile.write("\nBest average time to buy back:\n")
 			for look_ahead in average_bestgain["buy_back"]:
-				outfile.write(f"{look_ahead}: Average = {mean(average_bestgain['buy_back'][look_ahead]):.2f}%\n")
+				outfile.write(f"{look_ahead}: Average = {self.average(average_bestgain['buy_back'][look_ahead], 2):.2f}%\n")
+			outfile.write("="*130)
 
-			outfile.write("\nBear scores: % increases of coin price if you were to have bought at this score (hence you want to sell later)\n")
+			outfile.write("\n\nBear scores:\n" + "="*130 + "\n%increases of coin price if you were to have bought at this score peak (hence you want to sell later)\n")
 			for score in sorted(bearscore_bestgain.keys()):
-				outfile.write(f"{score}: Average = {mean(bearscore_bestgain[score]):.2f}%, {bearscore_bestgain[score]}\n")
+				outfile.write(f"{score}: Average = {self.average(bearscore_bestgain[score], 2):.2f}%, {bearscore_bestgain[score]}\n")
 			outfile.write("\nBest average time to sell later:\n")
 			for look_ahead in average_bestgain["sell_later"]:
-				outfile.write(f"{look_ahead}: Average = {mean(average_bestgain['sell_later'][look_ahead]):.2f}%\n")
+				outfile.write(f"{look_ahead}: Average = {self.average(average_bestgain['sell_later'][look_ahead], 2):.2f}%\n")
+			outfile.write("="*130)
 
-	#TODO consider making a volumne scorer too
+
+	def graph_historical_data(self, symbol, graph_type="bar", custom_filename = ""):
+		'''Generates either a bar graph or line graph summarising the potential gains from buying/selling at the given score peaks.'''
+
+		look_ahead_gains_csv = f"{self.coin_path}/historical/{symbol}_look_ahead_gains{custom_filename}.csv"
+		if not os.path.exists(look_ahead_gains_csv):
+			return f"No look_ahead_gains.csv {look_ahead_gains_csv} exists, please first run the Coin.look_ahead_gains method."
+
+		make_dict = lambda : {"30m":[], "1h":[], "4h":[], "1d":[], "3d":[], "1w":[], "2w":[]}
+		best_gains = {"buy_back":defaultdict(make_dict), "sell_later":defaultdict(make_dict)}
+
+		with open(look_ahead_gains_csv, 'r') as infile:
+			lookahead_csv_reader = csv.reader(infile)		
+			next(lookahead_csv_reader)
+			for row in lookahead_csv_reader:
+				index = 6
+				if row[5] == "buy_back":
+					for look_ahead in best_gains["buy_back"][int(row[3])]:
+						best_gains["buy_back"][int(row[3])][look_ahead].append(int(row[index]))
+						index += 1
+				else:
+					for look_ahead in best_gains["sell_later"][int(row[3])]:
+						best_gains["sell_later"][int(row[3])][look_ahead].append(int(row[index]))
+						index += 1
+
+		fig, (ax_bull, ax_bear) = plt.subplots(nrows= 2, ncols= 1, figsize=(20, 16))
+		plt.subplots_adjust(left=0.05, bottom=0.05, right=0.9, top=0.95, wspace=0.4, hspace=0.35)
+		color_dict = {"30m":"indianred", "1h":"chocolate", "4h":"orange", "1d":"yellowgreen", "3d":"forestgreen", "1w":"mediumspringgreen", "2w":"mediumturquoise"}	
+		scores = arange(15, 31)
+		width = 0.11
+		pos = -3
+
+		for look_ahead, color in color_dict.items():
+			averages = [self.average(best_gains["buy_back"][score][look_ahead]) for score in range(15, 31)]
+			stdevs = [stdev(best_gains["buy_back"][score][look_ahead]) if len(best_gains["buy_back"][score][look_ahead]) > 1 else 0 for score in range(15, 31)]
+			if graph_type == "bar":
+				ax_bull.bar(scores + width*pos, averages, width, yerr= stdevs, label=look_ahead, color= color, edgecolor= "black")
+			else:
+				ax_bull.errorbar(scores, averages, yerr= stdevs, label=look_ahead)
+
+			averages = [self.average(best_gains["sell_later"][score][look_ahead]) for score in range(15, 31)]
+			stdevs = [stdev(best_gains["sell_later"][score][look_ahead]) if len(best_gains["sell_later"][score][look_ahead]) > 1 else 0 for score in range(15, 31)]
+			if graph_type == "bar":
+				ax_bear.bar(scores + width*pos, averages, width, yerr= stdevs, label=look_ahead, color= color, edgecolor= "black")
+			else:
+				ax_bear.errorbar(scores, averages, yerr= stdevs, label=look_ahead)
+			pos += 1
+
+		ax_bull.axhline(y=100, color="black", ls="--")
+		ax_bull.set_ylabel(f"{self.coin} % gain after selling score peak", fontweight="demi", size="xx-large")
+		ax_bull.set_xlabel("Bull Score", fontweight="demi", size="x-large")
+		ax_bull.set_title("Buy-back graph", fontweight="demi", size="xx-large", y=1.025)
+		ax_bull.legend(title="Post\nbuy/sell", title_fontsize="xx-large", loc='upper right', fontsize='xx-large', shadow=True, fancybox=True, bbox_to_anchor=(1.116, 0.125))
+
+		ax_bear.axhline(y=100, color="black", ls="--")
+		ax_bear.set_ylabel(f"{symbol.split(self.coin)[-1]} % gain after buying score peak", fontweight="demi", size="xx-large")
+		ax_bear.set_xlabel("Bear Score", fontweight="demi", size="x-large")
+		ax_bear.set_title("Sell-later graph", fontweight="demi", size="xx-large", y=1.025)
+
+		plt.savefig(f"{self.coin_path}/historical/{symbol}_scoring_graph{custom_filename}.png")
+
 	
 	@staticmethod
 	def score_performance(max_list, change_list, size, absolute_change, current_percent_change):
 		'''Scoring method. Determines what rank the current price action holds against historical data
-		If the performance is greater than the top 75% of price action history, then it can obtain some score.'''
+		If the performance is greater than the top 75% of price action history, then it can obtain some score.
+		Once the price action is strong enough to generate a score, it then can also generate a change_score.
+		To even have a change_score of 1, the price action has to be within the top 90% of %change in history.
+		Hence, any change score is impressive, and indication that price is very unlikely to maintain this current candle.'''
 
 		score, change_score = 0, 0
 		if absolute_change >= max_list[int(size * 0.75)]:
@@ -698,6 +764,8 @@ class Coin():
 				return 5
 			else:
 				return 6
+		elif amplitude_change <= amp_list[int(size * 0.05)]:
+			return -1
 		return 0
 
 
@@ -712,69 +780,31 @@ class Coin():
 
 
 	@staticmethod
-	def average(nums):
+	def average(nums, precision=1):
 		if len(nums) == 0:
-			return None
+			return nan
 		elif len(nums) == 1:
-			return nums
+			return nums[0]
 		total = 0
 		for num in nums:
 			total += num
-		return round((total) / len(nums), 1)
+		return round((total) / len(nums), precision)
 
 
-	def historical_score(self):
-		pass
-		
-		# make a graph which shows the profit/loss from selling/buying 1h, 4h, 1day, 2day, 3day, 1week from each pair
-		# This notifications will be based on: first calculating the current bull/bear score + change_score score, then seeing how those scores compare with
-		# the historical scores, if the current score is the highest among all previous scores, then clearly it's a big deal
-		# stanard variable naming
-		# BTC == coin
-		# USDT == trading_pair
-		# 4h == timeframe
-		# BTCUSDT == symbol
-		# BTCUSDT_4h == symbol_timeframe
-
-	def graph_historical_data(self, mode):
-		# Overall the goal is then to visualise all the information from historical_scoring + retain scoring + maybe volume scoring
-
-
-		# Do this using matplotlib/pandas
-		# Two graphs, Bull and bear: have top 15 scores (i.e. score 30 -> 15) as x_axis, for each one, have three virticle bars
-			# incorporate the change_score, the higher the change_score - e.g. 30 score would be basically never in history
-			# has the price close at this price% change accross all timeframes - thus indicating it's very, very likely to go in the opposite direction.
-		# where bar1 == profit made from selling after 1h, bar2 profit made from selling after 12h, bar3 profit made after selling 1day etc.
-		# so the Y axis is profit 
-		pass 
-
-	def generate_result_files(self, mode):
-		self.generate_summary_csv(mode)
+	def generate_all_result_files(self, mode):
 		self.graph_historical_data(mode)
+		# current score
+		# retain scorer
 
-
-	def generate_summary_csv(self, mode):
-		pass
-
-	def volumn(self):
-		# convert INJ volumne data to usdt - add this data to graph 
-		pass
-
-	def volumn_score(self):
-		# compare given candle volumne with all other historical volumns to generate a single score - add this data to graph 
-		pass 
 
 	def sell_assest(self):
 		'''Use only during emergency, sells asset on binance'''
 
-	def notify(self):
 
-		# The server will regularly compute the current score -> compare the score with historical scores, if the score is in say the top 5%, it will notify user
-		# and generate graph, which will show the likely hood of profit/gain (for 1h, 1d, 3d etc.) if you were to buy/sell now 
-		# Using the bull/bear score combined with change_scorement score
-		pass
-
-coin = Coin('INJ')
+# coin = Coin('INJ')
 # coin.compute_historical_score('INJUSDT')
-coin.look_ahead_gains("INJUSDT")
-coin.retain_score("INJUSDT")
+# coin.look_ahead_gains("INJUSDT", peak_start_only=True, custom_filename="peak_start_only")
+# coin.retain_score("INJUSDT")
+# coin.graph_historical_data("INJUSDT", custom_filename="peak_start_only")
+# coin.look_ahead_gains("INJUSDT")
+# coin.graph_historical_data("INJUSDT")

@@ -192,14 +192,13 @@ class Notification_server():
         '''Thread starts the monitoring and score calculation of given coin. Handles external signals to drop activity'''
 
         coin_obj = Coin(coin) # Create coin object.
-        trim = len(coin)
         previous_bull_score = 0
         previous_bear_score = 0
         while True:
             self.tickspeed_handler.wait() # Releases every server tick.
 
             # Check to see whether coin drop instruction is activate.
-            if self.SERVER_INSTRUCTION['drop'] and self.SERVER_INSTRUCTION['drop'][1:trim + 1] == coin:    
+            if self.SERVER_INSTRUCTION['drop'] and self.SERVER_INSTRUCTION['drop'].split(coin)[0] == coin:    
                 item_to_drop = self.SERVER_INSTRUCTION['drop']
                 self.SERVER_INSTRUCTION['drop'] = ''
                 if re.search(item_to_drop.rstrip('1')[1:], str(self.MONITORED_COINS[coin])):
@@ -768,6 +767,9 @@ class Notification_server():
             print('WARNING: server shutdown process was NOT sucessful. Please wait for the admin.')
         
         #TODO remove all incoming/outgoing files
+
+
+#TODO add a current score interval boost mode, i.e. make the stdout calculate score once every 5 sec instead of 5min
 
 
 if __name__ == '__main__':
