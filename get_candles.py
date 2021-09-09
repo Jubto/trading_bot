@@ -529,7 +529,7 @@ class Coin():
 		Saves the data in 'look_ahead_gains.csv'
 		'''
 
-		# self.compute_historical_score(symbol, custom_timeframes, custom_filename)
+		self.compute_historical_score(symbol, custom_timeframes, custom_csv_filename)
 		threshold_score = int(0.5 * (len(custom_timeframes) * 6)) if custom_timeframes else int(0.5 * (len(self.deafult_scoring_timeframes) * 6)) #TODO make 0?
 		historical_score_csv = f"{self.coin_path}/historical/{symbol}_historical_scoring{custom_csv_filename}.csv"
 		look_ahead_gains_csv = f"{self.coin_path}/historical/{symbol}_look_ahead_gains{custom_filename}.csv"
@@ -554,15 +554,20 @@ class Coin():
 			for row in historical_scoring_DF.loc[skip_UTS:].itertuples(name=None):
 				score = int((max(row[2:4])))
 				if peak_start:
-					if not peak_start_only and score > peak: # and not peakstart only
+					if not peak_start_only and score > peak:
 						peak, peak_row = score, row
 						look_ahead = 12
 					else:
 						look_ahead -= 1
-						if not look_ahead or (peak_start_only and peak_start > score): # or peakstart only
+						if not look_ahead or (peak_start_only and peak_start > score): 
+							# Due to Binance exchange updates, some rows are missing, hence DF is sliced with safe buffer of 4500 5 min intervals rather than 4032
+							look_ahead_DF = historical_scoring_DF.loc[peak_row[0]:(peak_row[0] + 300000*4500)]
+							if (look_ahead_DF.shape[0] < 4032):
+								break # Less than 2 weeks of look ahead data avaliable, so end process
+
 							best_price = float(peak_row[1])
 							goal = "buy_back" if peak_row[2] > peak_row[3] else "sell_later"
-							for row_look_ahead in historical_scoring_DF.loc[peak_row[0]:(peak_row[0] + 300000*4032)].itertuples(name=None):
+							for row_look_ahead in look_ahead_DF.itertuples(name=None):
 								look_ahead += 1
 								look_ahead_price = float(row_look_ahead[1])
 								
@@ -576,6 +581,8 @@ class Coin():
 								if look_ahead in best_prices:
 									best_prices[look_ahead] = int((best_price / peak_row[1]) * 100)
 									best_price = look_ahead_price
+									if look_ahead == 4032:
+										break
 							utc_time = datetime.utcfromtimestamp(int(str(peak_row[0])[:-3])).strftime('|%d-%m-%Y %H:%M:%S|')
 							retain_csv_writer.writerow([utc_time, peak_row[1], peak_start, peak, peak_row[-1], goal, *[diff for diff in best_prices.values()], peak_row[0]])
 							look_ahead = 12
@@ -671,14 +678,14 @@ class Coin():
 			stdevs = [stdev(best_gains["buy_back"][score][look_ahead]) if len(best_gains["buy_back"][score][look_ahead]) > 1 else 0 for score in range(15, 31)]
 			if graph_type == "bar":
 				ax_bull.bar(scores + width*pos, averages, width, yerr= stdevs, label=look_ahead, color= color, edgecolor= "black")
-			else:
+			elif graph_type == "line":
 				ax_bull.errorbar(scores, averages, yerr= stdevs, label=look_ahead)
 
 			averages = [self.average(best_gains["sell_later"][score][look_ahead]) for score in range(15, 31)]
 			stdevs = [stdev(best_gains["sell_later"][score][look_ahead]) if len(best_gains["sell_later"][score][look_ahead]) > 1 else 0 for score in range(15, 31)]
 			if graph_type == "bar":
 				ax_bear.bar(scores + width*pos, averages, width, yerr= stdevs, label=look_ahead, color= color, edgecolor= "black")
-			else:
+			elif graph_type == "line":
 				ax_bear.errorbar(scores, averages, yerr= stdevs, label=look_ahead)
 			pos += 1
 
@@ -791,20 +798,16 @@ class Coin():
 		return round((total) / len(nums), precision)
 
 
-	def generate_all_result_files(self, mode):
-		self.graph_historical_data(mode)
-		# current score
-		# retain scorer
-
-
 	def sell_assest(self):
 		'''Use only during emergency, sells asset on binance'''
 
 
-# coin = Coin('INJ')
-# coin.compute_historical_score('INJUSDT')
-# coin.look_ahead_gains("INJUSDT", peak_start_only=True, custom_filename="peak_start_only")
-# coin.retain_score("INJUSDT")
-# coin.graph_historical_data("INJUSDT", custom_filename="peak_start_only")
-# coin.look_ahead_gains("INJUSDT")
-# coin.graph_historical_data("INJUSDT")
+if __name__ == "__main__":
+	# coin = Coin('INJ')
+	# coin.compute_historical_score('INJUSDT')
+	# coin.look_ahead_gains("INJUSDT", peak_start_only=True, custom_filename="peak_start_only")
+	# coin.retain_score("INJUSDT")
+	# coin.graph_historical_data("INJUSDT", custom_filename="peak_start_only")
+	# coin.look_ahead_gains("INJUSDT")
+	# coin.graph_historical_data("INJUSDT")
+	pass

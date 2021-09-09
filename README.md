@@ -1,5 +1,5 @@
 # trading_bot
-Trading bot server project (in progress) 
+Trading bot server project (Heavily under development, readme.md is NOT up to date) 
 
 # Server overview:
 

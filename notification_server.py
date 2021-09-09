@@ -1,5 +1,5 @@
 from threading import Thread, Event, enumerate as list_threads
-from get_candles import Coin # Self made
+from get_candles import Coin
 from glob import glob
 import subprocess
 import time
@@ -29,7 +29,7 @@ class Notification_server():
     Enter 'commands' to view all avaliable server commands  
     '''
 
-    SERVER_SPEED = 5 # Deafult server tick speed 5 seconds.
+    SERVER_SPEED = 1 # Deafult server tick speed 5 seconds.
     REQUEST_INTERVAL = 60 # Deafult server Binance candle request interval.
     SERVER_USERS = {} # Dict keeping track of server users and their attributes (coins, update_intervals, thresholds, previlages). 
     MONITORED_COINS = {} # Dict of coins server is currently monitoring - example  {coin:[symbol_timeframe, symbol_timeframe, ...]}
