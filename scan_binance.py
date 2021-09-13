@@ -8,11 +8,6 @@ import json
 import csv
 import os
 
-# Big picture: Trying to work out when the best time to buy after listing is
-# Also the percentage of newly listed coins which 2x+ from their 2w ATL - if it takes more than 6 months, then put it in fails
-# Also roughly when that surge happens (the week the first 2x occurs)
-# Also percentage of newly listed coins which fail.
-
 def init_scan_binance(save_path, tradingpair, mode):
 
 	os.mkdir(save_path)
@@ -61,7 +56,8 @@ def anaylse_klines(symbol, klines, gains_data, stat_row, mode):
 
 
 def scan_binance_listing_trends(symbols, tradingpair, save_path, mode="short_term"):
-	'''mode either short_term or long_term'''
+	'''Retreive data from binance for each symbol and performs basic analysis. Stores data in db. 
+	mode either short_term (only looks at first 6 months of data) or long_term'''
 
 	if not os.path.exists(save_path):
 		init_scan_binance(save_path, tradingpair, mode)
@@ -73,7 +69,6 @@ def scan_binance_listing_trends(symbols, tradingpair, save_path, mode="short_ter
 
 	# update symbols already in database if needed
 	for symbol in symbols.intersection(set(listing_data.keys())):
-		print(f"Seen symbol: {symbol}")
 		weeks_until_6months = 26 - len(listing_data[symbol]) + 1 # Example, 26 - 16 = 10, meaning 10 weeks + 1 incomplete week
 		if weeks_until_6months > 0 or mode == "long_term":
 			until = weeks_until_6months if mode == "short_term" else 1000
@@ -86,8 +81,7 @@ def scan_binance_listing_trends(symbols, tradingpair, save_path, mode="short_ter
 	# loop through new symbols which haven't been added to database
 	current_weekly_UTS = 0
 	stats_rows = []
-	for symbol in list(symbols.difference(set(listing_data.keys())))[:5]:
-		print(f"symbol: {symbol}")
+	for symbol in symbols.difference(set(listing_data.keys())):
 		try:
 			weekly_klines = client.get_historical_klines(symbol, "1w", EARLIEST_DATE)
 			if (len(weekly_klines) < 2):
