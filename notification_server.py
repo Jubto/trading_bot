@@ -1,5 +1,6 @@
 from threading import Thread, Event, enumerate as list_threads
 from get_candles import Coin
+from enums import INTERVALS
 from glob import glob
 import subprocess
 import time
@@ -23,42 +24,41 @@ class Notification_server():
     '''
     Start server with 0 or more coin symbols to monitor, for example: 
         <python3 notification_server.py INJ RVN MONA BTC>
-
     When no arguments entered, server will monitor all coins stored in database, or prompt user if none are stored. 
-
     Enter 'commands' to view all avaliable server commands  
     '''
 
+    # Server enums
     SERVER_SPEED = 1 # Deafult server tick speed 5 seconds.
     REQUEST_INTERVAL = 60 # Deafult server Binance candle request interval.
-    SERVER_USERS = {} # Dict keeping track of server users and their attributes (coins, update_intervals, thresholds, previlages). 
-    MONITORED_COINS = {} # Dict of coins server is currently monitoring - example  {coin:[symbol_timeframe, symbol_timeframe, ...]}
-    MESSAGE_BACKLOG = [] # List of messages for server_stdout() to process in order. 
-    OUTGOING_MESSAGES = {} # Dict of messages from all users which get seqentially delivered to each respective user email
     BULL_THRESHOLD = 25 # Deafult thresholds before notification sent. Each user can set their own threshold under their attributes. (eventually implement ML)
     BEAR_THRESHOLD = 25 # Eventually will make both of these dicts with keys as coins, value as threshold.
-    MODE_1_MESSAGES = {} # Dict to store mode 1 (signal) like messages for server_user thread to read/send.
-    MODE_2_MESSAGES = {} # Dict to store mode 2 (update) like messages for server_user thread to read/send.
     MODE_2_REQUEST = 0 # Whenever a user thread requires a new update, this will handle that.
     SERVER_COMMANDS = ['commands', 'monitor', 'all', 'now', 'drop', 'monitoring', 'request_interval', 'quit', 'stdout', 'server_speed', 'notify', 'debug', 'post']
-    SERVER_INSTRUCTION = {'drop': '', "stdout": 0, 'request_interval': [], 'pause': 0, 'boost': 0, 'post':0, 'new_user':''}
-
-    tickspeed_handler = Event() # Event object to handle server tick speed. 
-    server_shutdown = Event() # Event object to handle server shutdown if command 'quit' is entered.
     
     def __init__(self, coins=[]):
 
+        self.tickspeed_handler = Event() # Event object to handle server tick speed. 
+        self.server_shutdown = Event() # Event object to handle server shutdown if command 'quit' is entered.
         self.tickspeed_handler.set()
         self.root_path = os.path.dirname(os.path.realpath(__file__))
         self.data_path = self.root_path + '/coindata'
         self.script_path = self.root_path + '/notification_scripts'
         self.attribute_path = self.script_path + '/server_attributes'
-        self.postfix_init = False
-        self.server_owner_gmail = ''
         if not os.path.exists(self.data_path):
             os.mkdir(self.data_path) # This acts like a database to store all users coins and anaylsis.
-        self.server_welcome()
 
+        self.monitored_coins = {} # Dict of coins server is currently monitoring - example  {coin:[symbol_timeframe, symbol_timeframe, ...]}
+        self.server_instruction = {'drop': '', "stdout": 0, 'request_interval': [], 'pause': 0, 'boost': 0, 'post':0, 'new_user':''}
+        self.message_backlog = [] # List of messages for server_stdout() to process in order. 
+        self.server_users = {} # Dict keeping track of server users and their attributes (coins, update_intervals, thresholds, previlages). 
+        self.mode_1_messages = {} # Dict to store mode 1 (signal) like messages for server_user thread to read/send.
+        self.mode_2_messages = {} # Dict to store mode 2 (update) like messages for server_user thread to read/send.
+        self.outgoing_messages = {} # Dict of messages from all users which get seqentially delivered to each respective user email
+        self.postfix_init = False
+        self.server_owner_gmail = ''
+
+        self.server_welcome()
         if coins:
             self.monitor_all_coins(coins=coins) # Monitor all coins given as arguments if valid.
         else:
@@ -109,7 +109,7 @@ class Notification_server():
                 elif user_input == 'quit':
                     self.shutdown_server()
                 elif user_input == 'post':
-                    self.SERVER_INSTRUCTION['post'] = 1
+                    self.server_instruction['post'] = 1
                 elif user_input == 'stdout':
                     self.toggle_stdout()
                 elif user_input == 'request_interval':
@@ -127,31 +127,27 @@ class Notification_server():
                 elif user_input == 'notify':
                     self.notification_init()
                 elif user_input == 'debug':
-                    print(f"Server instruction settings are:\n{self.SERVER_INSTRUCTION}")
+                    print(f"Server instruction settings are:\n{self.server_instruction}")
                     self.debug()
             else:
                 print(f"{user_input} is an invalid server command.")
                 print(f"Enter 'commands' to view all avaliable commands.")
 
 
-    def add_to_monitoring(self, coin=None, input_dict={}):
-        '''Handles validating and adding items into the server monitoring dictionary MONITORED_COINS'''
+    def add_to_monitoring(self, to_monitor={}):
+        '''Handles validating and adding items into the server monitoring dictionary monitored_coins'''
         
-        # This case is for server start up only
-        if coin:
-            input_dict[coin] = {'NA':[]} # tradingpair:[timeframes]
-
         # This section handles determining whether coin is valid with Binance, if so it will add to server monitoring.
         added_coins = set()
-        for coin in input_dict:
-            for tradingpair in input_dict[coin]:
+        for coin in to_monitor:
+            for tradingpair in to_monitor[coin]:
                 coin_obj = Coin(coin) # Create new coin object to monitor. 
-                files = coin_obj.list_saved_filenames() # Used to determine whether coin exists in local storage or not.
-                timeframes = input_dict[coin][tradingpair]
+                symbol_timeframes = coin_obj.get_symbol_timeframes() # Used to determine whether coin exists in local storage or not.
+                timeframes = to_monitor[coin][tradingpair]
                 deafult_timeframes = ['1w', '3d', '1d', '4h', '1h']
 
-                if len(files) == 0:  
-                    # This means coin had no local storage   
+                if len(symbol_timeframes) == 0:  
+                    # This means coin had no local storage
                     if tradingpair != 'NA':
                         if coin_obj.get_candles(tradingpair=tradingpair, intervals=timeframes):
                             pass # Binance succesfully returned candles for coin-tradingpair/timeframe.
@@ -160,7 +156,6 @@ class Notification_server():
                             continue # Binance rejected request.
                     elif coin_obj.get_candles(tradingpair='USDT', intervals=deafult_timeframes):
                         tradingpair = 'USDT' # No tradingpair specified so deafult tradingpair assigned to coin.
-                        print(f"\nServer will monitor {coin}USDT by deafult.")
                     else:
                         print(f"{coin} is not avaliable on Binance.")
                         continue # This means coin provided is invalid for Binance.
@@ -175,16 +170,15 @@ class Notification_server():
                 added_coins.add(coin)
 
                 # Add coin to server monitoring list
-                if coin not in self.MONITORED_COINS.keys():
-                    self.MONITORED_COINS[coin] = []
-                files = coin_obj.list_saved_filenames() # New coin csv files may have been added. 
-                for csvfile_name in files:
-                    symbol_timeframe = csvfile_name.split('.')[0]
+                if coin not in self.monitored_coins.keys():
+                    self.monitored_coins[coin] = []
+                symbol_timeframes = coin_obj.get_symbol_timeframes() # New coin csv files may have been added. 
+                for symbol_timeframe in symbol_timeframes:
                     symbol = symbol_timeframe.split('_')[0]
                     if tradingpair == 'NA' or symbol == coin_obj.coin + tradingpair:
-                        if symbol_timeframe not in self.MONITORED_COINS[coin]:
-                            self.MONITORED_COINS[coin].append(symbol_timeframe) # Append only tradingpair/timeframe which server will actively monitoring.
-                self.MONITORED_COINS[coin].sort()
+                        if symbol_timeframe not in self.monitored_coins[coin]:
+                            self.monitored_coins[coin].append(symbol_timeframe) # Append only tradingpair/timeframe which server will actively monitoring.
+                self.monitored_coins[coin].sort()
         return added_coins # Return set of succesfully added coins. 
 
 
@@ -198,53 +192,53 @@ class Notification_server():
             self.tickspeed_handler.wait() # Releases every server tick.
 
             # Check to see whether coin drop instruction is activate.
-            if self.SERVER_INSTRUCTION['drop'] and self.SERVER_INSTRUCTION['drop'].split(coin)[0] == coin:    
-                item_to_drop = self.SERVER_INSTRUCTION['drop']
-                self.SERVER_INSTRUCTION['drop'] = ''
-                if re.search(item_to_drop.rstrip('1')[1:], str(self.MONITORED_COINS[coin])):
+            if self.server_instruction['drop'] and self.server_instruction['drop'].split(coin)[0] == coin:    
+                item_to_drop = self.server_instruction['drop']
+                self.server_instruction['drop'] = ''
+                if re.search(item_to_drop.rstrip('1')[1:], str(self.monitored_coins[coin])):
                     if '1' == item_to_drop[-1]:
                         print(f"apparently there's a 1 at the end??? {item_to_drop}")
                         item_to_drop = item_to_drop.rstrip('1')
                         if '1' == item_to_drop[0]:
                             coin_obj.remove_coin() # Remove from database. 
                         elif '2' == item_to_drop[0]:
-                            coin_obj.remove_tradingpair(item_to_drop[1:]) # Remove from database. 
+                            coin_obj.remove_symbol(item_to_drop[1:]) # Remove from database. 
                         else:
                             coin_obj.remove_timeframe(item_to_drop[1:]) # Remove from database. 
-                    clone_MONITORED_COINS = self.MONITORED_COINS[coin].copy()
-                    for pair in clone_MONITORED_COINS:
+                    clone_monitored_coins = self.monitored_coins[coin].copy()
+                    for pair in clone_monitored_coins:
                         if item_to_drop[1:] == pair or item_to_drop[1:] in pair:
-                            self.MONITORED_COINS[coin].remove(pair)
+                            self.monitored_coins[coin].remove(pair)
                     print(f"The following has been dropped: {item_to_drop[1:]}")
-                    if '1' == item_to_drop[0] or len(self.MONITORED_COINS[coin]) == 0:
-                        self.MONITORED_COINS.pop(coin)
+                    if '1' == item_to_drop[0] or len(self.monitored_coins[coin]) == 0:
+                        self.monitored_coins.pop(coin)
                         return 0 # Drop this coin thread.
 
             # Check to see whether request timer has activated.
-            if coin in self.SERVER_INSTRUCTION['request_interval']:
-                self.SERVER_INSTRUCTION['request_interval'].remove(coin) # Let's request_interval thread know which coins have started scoring.
-                symbol_timeframes = self.MONITORED_COINS[coin] # Only monitor specified tradingpairs.
+            if coin in self.server_instruction['request_interval']:
+                self.server_instruction['request_interval'].remove(coin) # Let's request_interval thread know which coins have started scoring.
+                symbol_timeframes = self.monitored_coins[coin] # Only monitor specified tradingpairs.
                 coin_score = coin_obj.current_score(to_monitor=symbol_timeframes) # Retreve coin score and analysis summary. 
                 bull_score = coin_score[1]
                 bear_score = coin_score[2]
 
-                if re.search(coin, str(self.SERVER_INSTRUCTION['drop'])):
+                if re.search(coin, str(self.server_instruction['drop'])):
                     continue # If user just entered coin to drop when score already processed.
-                if len(self.MESSAGE_BACKLOG) < len(self.MONITORED_COINS):
-                    self.MESSAGE_BACKLOG.append(coin_score) # Send data to stdout method. 
+                if len(self.message_backlog) < len(self.monitored_coins):
+                    self.message_backlog.append(coin_score) # Send data to stdout method. 
                 try:
-                    if self.MODE_1_MESSAGES[coin] and not self.SERVER_INSTRUCTION['new_user']:
-                        self.MODE_1_MESSAGES.pop(coin) # To prevent recuring posting of mode1 type messages.
+                    if self.mode_1_messages[coin] and not self.server_instruction['new_user']:
+                        self.mode_1_messages.pop(coin) # To prevent recuring posting of mode1 type messages.
                 except KeyError:
                     pass
 
                 if bull_score > previous_bull_score or bear_score > previous_bear_score:
                     if coin_score[1] >= self.BULL_THRESHOLD:
                         coin_obj.generate_result_files(mode='signal') # Generate/replace signal graph/csv files in server_mail/outgoing for users to send
-                        self.MODE_1_MESSAGES[coin] = f"BULL_{self.BULL_THRESHOLD}" # Send message to all users subscribed to this coin
+                        self.mode_1_messages[coin] = f"BULL_{self.BULL_THRESHOLD}" # Send message to all users subscribed to this coin
                     elif coin_score[2] >= self.BEAR_THRESHOLD:
                         coin_obj.generate_result_files(mode='signal')
-                        self.MODE_1_MESSAGES[coin] = f"BEAR_{self.BEAR_THRESHOLD}" 
+                        self.mode_1_messages[coin] = f"BEAR_{self.BEAR_THRESHOLD}" 
 
                 if self.MODE_2_REQUEST:
                     coin_obj.generate_result_files(mode='update')
@@ -260,7 +254,7 @@ class Notification_server():
                 coin = coin_path.split('/')[-1]
                 coins_dict[coin] = [tradingpair.split('/')[-1][:-4] for tradingpair in glob(f"{coin_path}/{coin}*")]
         else:
-            coins_dict = self.MONITORED_COINS.copy()
+            coins_dict = self.monitored_coins.copy()
 
         if coins_dict:
             if stored:
@@ -279,7 +273,7 @@ class Notification_server():
                     except KeyError:
                         tradingpairs[tradingpair] = [timeframe]
                 for tradingpair in tradingpairs:
-                    print(tradingpair, ':', [timeframe for timeframe in sorted(tradingpairs[tradingpair], key= lambda i : Coin.INTERVALS.index(i))])
+                    print(tradingpair, ':', [timeframe for timeframe in sorted(tradingpairs[tradingpair], key= lambda i : INTERVALS.index(i))])
             print('')
             
         else:
@@ -295,8 +289,7 @@ class Notification_server():
             coins = [path.split('/')[-1] for path in paths] # Clean path to get only the directory name (i.e. coin).
 
         coins_to_add = set()
-        for coin in coins:
-            coins_to_add = coins_to_add.union(self.add_to_monitoring(coin = coin.upper())) # Validate each coin entered, add to monitoring
+        coins_to_add = coins_to_add.union(self.add_to_monitoring(to_monitor= {coin.upper():{"NA":[]} for coin in coins})) # Validate each coin entered, add to monitoring
         self.add_new_coins(coins_to_add) # Start thread for each coin if one doesn't already exist.
 
 
@@ -305,12 +298,12 @@ class Notification_server():
 
         while True:
             threads = [str(thread).split(',')[0].split('(')[1] for thread in list_threads()] # List all activate threads.
-            coins = [coin for coin in threads if coin in self.MONITORED_COINS] # List only active coin threads.
-            self.SERVER_INSTRUCTION['request_interval'] = coins # Change global variable to be list of coins ready to have scores checked.
+            coins = [coin for coin in threads if coin in self.monitored_coins] # List only active coin threads.
+            self.server_instruction['request_interval'] = coins # Change global variable to be list of coins ready to have scores checked.
             Thread(target=self.boost_speed, args=(0.1,), daemon=True).start() # Temporarily boost server speed for faster processing. 
-            while self.SERVER_INSTRUCTION['request_interval'] != []:
+            while self.server_instruction['request_interval'] != []:
                 self.tickspeed_handler.wait() # Keep checking every server tick whether all coin threads have starting scoring.
-            self.SERVER_INSTRUCTION['boost'] = 0 # Turn off boost thread.
+            self.server_instruction['boost'] = 0 # Turn off boost thread.
             time.sleep(self.REQUEST_INTERVAL) # Releases every request_interval time. 
 
 
@@ -330,42 +323,41 @@ class Notification_server():
         messages = [] # list of score_dict
         while True:
             self.tickspeed_handler.wait() # Releases every server tick.
-            if len(self.MESSAGE_BACKLOG) >= len(self.MONITORED_COINS):
-                messages = self.MESSAGE_BACKLOG.copy()
-                self.MESSAGE_BACKLOG = [] # Empty message log.
-                if self.SERVER_INSTRUCTION['stdout']:
-                    self.SERVER_INSTRUCTION['post'] = 1 # Note, post can be turned on via user input also. 
+            if len(self.message_backlog) >= len(self.monitored_coins):
+                messages = self.message_backlog.copy()
+                self.message_backlog = [] # Empty message log.
+                if self.server_instruction['stdout']:
+                    self.server_instruction['post'] = 1 # Note, post can be turned on via user input also. 
 
-            if self.SERVER_INSTRUCTION['post'] and messages:
+            if self.server_instruction['post'] and messages:
                 while True:
-                    if self.SERVER_INSTRUCTION['pause']:
+                    if self.server_instruction['pause']:
                         time.sleep(1)
                         continue
                     break
                 for message in messages:
                     if message[-1] == "coin_score":
-                        max_potential_score = message[4] * 6
+                        max_potential_score = message[5] * 6
                         print('\n\n' + '='*130)
                         print(f"\nCoin {message[0]} monitoring update:")
                         print(f"Overview:")
-                        print(json.dumps(message[6], indent=4))
-                        print(f"\nCurrent price: {message[5]}")
-                        print(f"Bull score: {message[1]} out of {max_potential_score}")
-                        print(f"Bear score: {message[2]} out of {max_potential_score}")
-                        print(f"%Change score: {message[3]} out of {max_potential_score}")
+                        print(json.dumps(message[7], indent=4))
+                        print(f"\nCurrent price: {message[6]}")
+                        print(f"Bull score: {message[1]} out of {max_potential_score}, change score: {message[3]} out of {max_potential_score}")
+                        print(f"Bear score: {message[2]} out of {max_potential_score}, change score: {message[4]} out of {max_potential_score}")
                         print('='*130 + '\n\n')
-                self.SERVER_INSTRUCTION['post'] = 0
+                self.server_instruction['post'] = 0
 
 
     def toggle_stdout(self):
         '''Toggles server stdout between periodic and prompt only'''
 
-        if self.SERVER_INSTRUCTION['stdout'] == 1:
+        if self.server_instruction['stdout'] == 1:
             print('Server stdout has been toggled OFF.')
-            self.SERVER_INSTRUCTION['stdout'] = 0
+            self.server_instruction['stdout'] = 0
         else:
             print('Server stdout has been toggled ON.')
-            self.SERVER_INSTRUCTION['stdout'] = 1
+            self.server_instruction['stdout'] = 1
 
     
     def update_timers(self, timer):
@@ -377,9 +369,9 @@ class Notification_server():
         elif timer == 'server_speed':
             words.extend([' (second)', 'tick speed'])
 
-        self.SERVER_INSTRUCTION['pause'] = 1
+        self.server_instruction['pause'] = 1
         user_input = input(f"Please input a positive integer{words[0]} for new server {words[1]}: ")
-        self.SERVER_INSTRUCTION['pause'] = 0
+        self.server_instruction['pause'] = 0
         try:
             user_input = int(user_input)
             if user_input > 0:
@@ -398,8 +390,8 @@ class Notification_server():
 
         original_SERVER_SPEED = self.SERVER_SPEED
         self.SERVER_SPEED = boost
-        self.SERVER_INSTRUCTION['boost'] = boost
-        while self.SERVER_INSTRUCTION['boost']:
+        self.server_instruction['boost'] = boost
+        while self.server_instruction['boost']:
             time.sleep(boost)
         self.SERVER_SPEED = original_SERVER_SPEED
 
@@ -410,7 +402,7 @@ class Notification_server():
         input_coin_dict = {}
         deafult_timeframes = ['1w', '3d', '1d', '4h', '1h']
 
-        self.SERVER_INSTRUCTION['pause'] = 1 # Stops all server stdout for cleaner user interaction.
+        self.server_instruction['pause'] = 1 # Stops all server stdout for cleaner user interaction.
         self.current_monitoring()
         self.current_monitoring(stored=True)
         print('='*10 + 'INSTRUCTIONS' + '='*10)
@@ -444,7 +436,7 @@ class Notification_server():
             for tradingpair in input_coin_dict[coin]:
                 symbol = coin + tradingpair
                 try:
-                    for symbol_timeframe in self.MONITORED_COINS[coin]:
+                    for symbol_timeframe in self.monitored_coins[coin]:
                         if symbol == symbol_timeframe.split('_')[0]:
                             input_coin_dict[coin][tradingpair].append(symbol_timeframe.split('_')[1]) # Add all monitored timeframes for a given tradingpair.
                 except KeyError:
@@ -473,8 +465,8 @@ class Notification_server():
                     input_coin_dict[coin][tradingpair].extend(timeframes.split(' ')) # Add any additional timeframes on top of current ones. 
                     break
         
-        self.SERVER_INSTRUCTION['pause'] = 0 # Unpause server stdout.
-        added_coins = self.add_to_monitoring(input_dict=input_coin_dict) # Verify all user entries and add them to monitoring.
+        self.server_instruction['pause'] = 0 # Unpause server stdout.
+        added_coins = self.add_to_monitoring(to_monitor=input_coin_dict) # Verify all user entries and add them to monitoring.
         Thread(target=self.add_new_coins, args=(added_coins,), daemon=True).start() # Input all successful entries.
 
 
@@ -493,7 +485,7 @@ class Notification_server():
         input_coin_dict = {}
         to_drop = set()
         
-        self.SERVER_INSTRUCTION['pause'] = 1 # Stops all server stdout for cleaner user interaction.
+        self.server_instruction['pause'] = 1 # Stops all server stdout for cleaner user interaction.
         self.current_monitoring()
         self.current_monitoring(stored=True)
         print('Enter a coins, coins/tradingpairs, or coins/tradingpairs/timeframes to drop in the list above, appending "-drop"s')
@@ -547,7 +539,7 @@ class Notification_server():
                         to_drop.add(coin + '_' + tradingpair + '_@' + timeframe)  
                     break
         Thread(target=self.drop_coins, args=(to_drop,), daemon=True).start()
-        self.SERVER_INSTRUCTION['pause'] = 0 # Unpause server stdout.
+        self.server_instruction['pause'] = 0 # Unpause server stdout.
 
     def drop_coins(self, to_drop):
         '''Handles removing given coin/tradingpair/timeframe from Server monitoring or database'''
@@ -556,26 +548,26 @@ class Notification_server():
         for item in to_drop:
             item = item.replace('-DROP', '')
             item = item.split('_')
-            print(f"SERVER drop self.SERVER_INSTRUCTION will be {item}") #TODO remove
+            print(f"SERVER drop self.server_instruction will be {item}") #TODO remove
             if len(item) == 1:
-                self.SERVER_INSTRUCTION['drop'] = '1' + item[0]
-                while self.SERVER_INSTRUCTION['drop']:
+                self.server_instruction['drop'] = '1' + item[0]
+                while self.server_instruction['drop']:
                     self.tickspeed_handler.wait()
             elif len(item) == 2:
-                self.SERVER_INSTRUCTION['drop'] = '2' + item[0] + item[1]
-                while self.SERVER_INSTRUCTION['drop']:
+                self.server_instruction['drop'] = '2' + item[0] + item[1]
+                while self.server_instruction['drop']:
                     self.tickspeed_handler.wait()
             else:
-                self.SERVER_INSTRUCTION['drop'] = '3' + item[0] + item[1] + item[2].replace('@', '_')
-                while self.SERVER_INSTRUCTION['drop']:
+                self.server_instruction['drop'] = '3' + item[0] + item[1] + item[2].replace('@', '_')
+                while self.server_instruction['drop']:
                     self.tickspeed_handler.wait()
-        self.SERVER_INSTRUCTION['boost'] = 0 # Turn off boost thread.
+        self.server_instruction['boost'] = 0 # Turn off boost thread.
 
  
     @staticmethod
     def re_search(string):
         '''Performs search for invalid symbols'''
-        if re.search('[,.|!~`@#$%^&*():;/_=+\[\]\{\}]', string):
+        if re.search('[,.|!~`@#$%^&*():;/_=+\[\]\{\}]', string): # TODO just do the inverse, list chars which are allowed only
             print(f"Invalid characters used in {string}.")
             return 1
         if re.search('-', string):
@@ -597,23 +589,23 @@ class Notification_server():
         Previous_scores = {}
         username = gmail.split('@')[0]
         if owner:
-            coins = list(self.MONITORED_COINS.keys())
-            self.SERVER_USERS[gmail] = {'username':username, 'gmail':gmail, 'privilege': 'admin', 'coins':coins, 'threshold':'ML', 'update_interval': 1}
+            coins = list(self.monitored_coins.keys())
+            self.server_users[gmail] = {'username':username, 'gmail':gmail, 'privilege': 'admin', 'coins':coins, 'threshold':'ML', 'update_interval': 1}
         else:
-            self.SERVER_USERS[gmail] = {'username':username, 'gmail':gmail, 'privilege': 'user', 'coins':[], 'threshold':'ML', 'update_interval': 1}
-        for coin in self.SERVER_USERS[gmail]['coins']:
+            self.server_users[gmail] = {'username':username, 'gmail':gmail, 'privilege': 'user', 'coins':[], 'threshold':'ML', 'update_interval': 1}
+        for coin in self.server_users[gmail]['coins']:
             Previous_scores[coin] = 0 
 
-        Thread(target=self.server_user_mode_2_message_handler, name=f"server_user_message_handler_{username}", args=(self.SERVER_USERS[gmail],), daemon=True).start()
+        Thread(target=self.server_user_mode_2_message_handler, name=f"server_user_message_handler_{username}", args=(self.server_users[gmail],), daemon=True).start()
 
         while True:
-            if self.MODE_1_MESSAGES: # Checks for any signals (due to a coin passing their threshold) - Note, these messages get cleared elsewhere above.
-                coins = self.MODE_1_MESSAGES.copy()
+            if self.mode_1_messages: # Checks for any signals (due to a coin passing their threshold) - Note, these messages get cleared elsewhere above.
+                coins = self.mode_1_messages.copy()
                 for coin in coins:
                     score = coins[coin].split('_')[-1] 
                     mood = coins[coin].split('_')[0]
-                    user_thresold = self.SERVER_USERS[gmail]['threshold']
-                    if coin in self.SERVER_USERS[gmail]['coins'] and (user_thresold == 'ML' or score >= user_thresold):
+                    user_thresold = self.server_users[gmail]['threshold']
+                    if coin in self.server_users[gmail]['coins'] and (user_thresold == 'ML' or score >= user_thresold):
                         if score < Previous_scores[coin]:
                             continue 
                         subject = f"SIGNAL ALERT: {coin} passed {mood}ish threshold!"
@@ -621,12 +613,12 @@ class Notification_server():
                                     'The summary excel and historical score vs performance graphs have been attached to assist in your descision.')
                         files = ','.join(glob(f"{self.root_path}/server_mail/outgoing/{coin}_SIGNAL*"))
                         message = {'user':gmail, 'title':subject, 'details':details, 'files':files}
-                        self.OUTGOING_MESSAGES[username] = message # Send mode1 email.
+                        self.outgoing_messages[username] = message # Send mode1 email.
             
             try:
-                message = self.MODE_2_MESSAGES[gmail]
-                self.OUTGOING_MESSAGES[gmail] = message # send mode2 email.
-                self.MODE_2_MESSAGES.pop(gmail)
+                message = self.mode_2_messages[gmail]
+                self.outgoing_messages[gmail] = message # send mode2 email.
+                self.mode_2_messages.pop(gmail)
             except KeyError:
                 pass # After each users specified interval passes, their new mode2 message will become avaliable.
             
@@ -638,7 +630,7 @@ class Notification_server():
 
         # Thread will send mode 2 message upon creation, and then wait for update_interval time to send next one. 
         while True:
-            self.MODE_2_REQUEST = len(self.MONITORED_COINS)
+            self.MODE_2_REQUEST = len(self.monitored_coins)
             while self.MODE_2_REQUEST:
                 self.tickspeed_handler.wait()
             update_message_timer = user_dict['update_interval'] * 3600 # seconds.
@@ -652,14 +644,14 @@ class Notification_server():
                         'To modify how often this type of message sends, email this address "update-X"')
             files = ','.join([','.join(file_group) for file_group in [glob(f"{self.root_path}/server_mail/outgoing/{coin}_UPDATE*") for coin in coins] if file_group != []])
             message = {'user':gmail, 'title':subject, 'details':details, 'files':files}
-            self.MODE_2_MESSAGES[gmail] = message
+            self.mode_2_messages[gmail] = message
             
             time.sleep(update_message_timer) # If user decides to increase this frequency, destroy the thread and create new one
             #TODO For a situation where a new user joins, and the mode1 messages are passed thesholds, let this create a mode1 message just as their first message
 
 
     def server_user_attributes(self, coins):
-        '''Handles adding or removing attributes to the SERVER_USERS global variable'''
+        '''Handles adding or removing attributes to the server_users global variable'''
 
         #TODO potentially make a user class, with these methods, and attributes, in a seperate file - maybe 
 
@@ -668,6 +660,7 @@ class Notification_server():
 
     def recieve_mail_instructions(self):
         '''Thread which handles listening for emails from server users'''
+        #TODO
         # Ideally waits in while loop, checking incoming mail each time (which come from script, generates new file for each mail) - by running recevie_mail.sh 
         # Once this checks the file, it deletes it (clearing inbox)
         # This will read the incoming.txt (where the received instructions are) and make/modify each outgoing.txt which then gets picked up by notification_send_gmail
@@ -699,12 +692,12 @@ class Notification_server():
         '''Thread which handles sending emails to server users'''
 
         while self.postfix_init:
-            while self.OUTGOING_MESSAGES:
-                to_send = self.OUTGOING_MESSAGES.copy()
-                print(f"self.OUTGOING_MESSAGES is: {self.OUTGOING_MESSAGES}")
+            while self.outgoing_messages:
+                to_send = self.outgoing_messages.copy()
+                print(f"self.outgoing_messages is: {self.outgoing_messages}")
                 self.tickspeed_handler.wait()
                 for user in to_send:
-                    self.OUTGOING_MESSAGES.pop(user)
+                    self.outgoing_messages.pop(user)
                     message = to_send[user]
                     sendmail_process = subprocess.run([self.script_path + '/send_mail.sh', *[message[header] for header in message]])
                     if sendmail_process.returncode == 0:
@@ -718,7 +711,7 @@ class Notification_server():
         '''Handles postfix initiation and SMTP communication with user gmail'''
 
         if not self.postfix_init:
-            self.SERVER_INSTRUCTION['pause'] = 1 # Stops all server stdout for cleaner user interaction.
+            self.server_instruction['pause'] = 1 # Stops all server stdout for cleaner user interaction.
             notification_init_process = subprocess.run(['sudo', self.script_path + '/notification_init.sh'])
             if notification_init_process.returncode == 0:
                 postfix_init_process = subprocess.run(['sudo', self.script_path + '/postfix_init.sh'])
@@ -741,7 +734,7 @@ class Notification_server():
                     elif postfix_init_process.returncode == 2:
                         postfix_init_process = subprocess.run(['sudo', self.script_path + '/postfix_init.sh'])
                     time.sleep(0.5)
-                self.SERVER_INSTRUCTION['pause'] = 0 # Unpause server stdout.
+                self.server_instruction['pause'] = 0 # Unpause server stdout.
                 return
             print("Server notification service will NOT commence until this issue is resolved.")
 
@@ -751,7 +744,7 @@ class Notification_server():
 
         print('\nServer is currently running the following threads:\n')
         [print('Thread: ' + str(thread).split(',')[0].split('(')[1]) for thread in list_threads()]
-        print(f"\nServer instructions are set as: \n{self.SERVER_INSTRUCTION}")
+        print(f"\nServer instructions are set as: \n{self.server_instruction}")
         print(f"Server tick speed: {self.SERVER_SPEED}")
         print(f"Server interval speed: {self.REQUEST_INTERVAL}")
 
@@ -773,15 +766,7 @@ class Notification_server():
 
 
 if __name__ == '__main__':
-    # Server can be started with <python3 notification_server.py>
-    # Optional coins can be added, example: <python3 notification_server.py BTC LTC ETH INJ>
-    # Once the server is running, to view commands enter <commands> 
-    user_start_arguments = sys.argv
-    if len(user_start_arguments) == 1:
-        server = Notification_server()
-    elif len(user_start_arguments) > 1:
-        coins = user_start_arguments[1:]
-        server = Notification_server(coins=coins)
+    # Example: <python3 notification_server.py BTC LTC ETH INJ>
+    server = Notification_server(coins=sys.argv[1:])
     server.server_shutdown.wait() # Pauses main thread until shutdown_server method is invoked.
     print("Server shut down.")
-# Main thread ends here. 
