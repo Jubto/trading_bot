@@ -559,7 +559,7 @@ class Coin():
             if (outfile.tell() == 0):
                 timeframes = custom_timeframes if custom_timeframes else self.deafult_scoring_timeframes
                 retain_csv_writer.writerow(["UTC", "price", "peak_start", "peak_top", "change_score", "goal",
-                                            "%diff_30min", "%diff_1h", "%diff_4h", "%diff_1d", "%diff_3d", "%diff_1w", "%diff_2w", *timeframes, "UTS"])
+                                            "%diff_30min", "%diff_1h", "%diff_4h", "%diff_12h", "%diff_1d", "%diff_3d", "%diff_1w", "%diff_2w", *timeframes, "UTS"])
             else:
                 infile.seek(outfile.tell() - 15) # skip to end of file, capture last UTS
                 skip_UTS = infile.readline()
@@ -629,8 +629,8 @@ class Coin():
 
         bullscore_bestgain = defaultdict(list) # key = score, value = list of best %gains
         bearscore_bestgain = defaultdict(list)
-        average_bestgain = {"buy_back":{"30m":[], "1h":[], "4h":[], "1d":[], "3d":[], "1w":[], "2w":[]},
-                            "sell_later":{"30m":[], "1h":[], "4h":[], "1d":[], "3d":[], "1w":[], "2w":[]}}
+        average_bestgain = {"buy_back":{"30m":[], "1h":[], "4h":[], "12h":[], "1d":[], "3d":[], "1w":[], "2w":[]},
+                            "sell_later":{"30m":[], "1h":[], "4h":[], "12h":[], "1d":[], "3d":[], "1w":[], "2w":[]}}
 
         with open(look_ahead_gains_csv, 'r') as infile, open(retain_score_csv, 'w') as outfile:
             lookahead_csv_reader = csv.reader(infile)
@@ -638,12 +638,12 @@ class Coin():
             for row in lookahead_csv_reader:
                 index = 6
                 if row[5] == "buy_back":
-                    bullscore_bestgain[int(row[3])].append(min([int(i) for i in row[6:-1]]))
+                    bullscore_bestgain[int(row[3])].append(min([int(i) for i in row[6:14]]))
                     for look_ahead in average_bestgain["buy_back"]:
                         average_bestgain["buy_back"][look_ahead].append(int(row[index]))
                         index += 1
                 else:
-                    bearscore_bestgain[int(row[3])].append(max([int(i) for i in row[6:-1]]))
+                    bearscore_bestgain[int(row[3])].append(max([int(i) for i in row[6:14]]))
                     for look_ahead in average_bestgain["sell_later"]:
                         average_bestgain["sell_later"][look_ahead].append(int(row[index]))
                         index += 1
@@ -665,16 +665,33 @@ class Coin():
             outfile.write("="*130)
 
 
-    def optimise_signal_threshold(self, symbol, custom_timeframes = [], custom_filename = ""):
+    def optimise_signal_threshold(self, symbol, custom_filename = ""):
         pass
 
     # Go back and sum all %gain and %loss for each stretegy, for each threshold set
     # strategy: peak_start, peak_end (first 5m without it), peak_top (else peak_end)
 
-    # returns best peak strategy, and best thresold
+    # returns best peak strategy, and best thresold, the best possible profit from all combinations
     # plus generates two kinds of graphs
-    # Y-axis %gain, x-axis time, line graph title strategy -> showing whether the signals improve overtime, graph them all (different threshold) ontop of each other
-    # y-axis total % gain, x-axis thresholds, bar graph - multiple bars per interval, where each bar is from a different strategy
+    # Y-axis %total gain, x-axis time, line graph title strategy -> showing whether the signals improve overtime, graph them all (different threshold) ontop of each other
+        # trying to determine how total performance changes with time
+    # y-axis % total gain, x-axis thresholds, bar graph - multiple bars per interval, where each bar is from a different strategy
+
+        # Plan:
+        # We need to start at 0% gain, and wait until we get our first BUY signal -> then from there start calculating gains
+        # Each time the next signal comes, check if it's the opposite signal, i.e. if prev was BUY, wait only for SELL, etc.
+        # Once next sigal comes, keep track of three options: either BUY/SELL the moment the signal comes, or when the signal ends, or when a possible peak comes
+        # Each time we make a move, store the % gain/loss of that move, profit/loss, TOTAL sum gain/loss, timestamp, threshold, strategy
+        # DF columns: UTS, strat, threshold, %gain/loss from move, profit/loss from move, TOTAL sum %gain/loss, TOTAL sum profit/loss
+        # Keep doing this until the end, and then repeat for each threshold 
+
+        #NOTE: possibly consider trying to integrate whether indivdual timeframe scores have an effect
+        # NOTE: after a best threshold is determined (if there is one) then run the simulation again, but consider change score too 
+
+        historical_score_csv = f"{self.coin_path}/historical/{symbol}_historical_scoring{custom_filename}.csv"
+        historical_scoring_DF = pd.read_csv(historical_score_csv, index_col= 0, usecols=[], header=None, skiprows=1)
+
+
 
 
     def graph_historical_data(self, symbol, graph_type="bar", custom_timeframes = [], custom_filename = ""):
@@ -712,6 +729,9 @@ class Coin():
         for look_ahead, color in color_dict.items():
             averages = [self.average(best_gains["buy_back"][score][look_ahead]) for score in range(15, 31)]
             stdevs = [stdev(best_gains["buy_back"][score][look_ahead]) if len(best_gains["buy_back"][score][look_ahead]) > 1 else 0 for score in range(15, 31)]
+            print(f'scores: {scores}')
+            print(f'averages: {averages}')
+            print(f'stdevs: {stdevs}')
             if graph_type == "bar":
                 ax_bull.bar(scores + width*pos, averages, width, yerr= stdevs, label=look_ahead, color= color, edgecolor= "black")
             elif graph_type == "line":
@@ -871,14 +891,14 @@ class Coin():
 
 
 if __name__ == "__main__":
-    # coin = Coin('INJ')
+    coin = Coin('INJ')
     # coin.compute_historical_score('INJUSDT')
     # # coin.look_ahead_gains("INJUSDT", peak_start_only=True, custom_filename="peak_start_only")
     # coin.look_ahead_gains("INJUSDT")
     # coin.retain_score("INJUSDT")
     # # coin.graph_historical_data("INJUSDT", custom_filename="peak_start_only")
     # # coin.look_ahead_gains("INJUSDT")
-    # coin.graph_historical_data("INJUSDT")
+    coin.graph_historical_data("INJUSDT", graph_type="bar")
 
     # # btc
     # coin.compute_historical_score('INJBTC')
@@ -895,9 +915,9 @@ if __name__ == "__main__":
 
 
     #BTC
-    coin = Coin('BTC')
-    coin.compute_historical_score('BTCUSDT')
-    coin.look_ahead_gains("BTCUSDT")
-    coin.retain_score("BTCUSDT")
-    coin.graph_historical_data("BTCUSDT")  
+    # coin = Coin('BTC')
+    # coin.compute_historical_score('BTCUSDT')
+    # coin.look_ahead_gains("BTCUSDT")
+    # coin.retain_score("BTCUSDT")
+    # coin.graph_historical_data("BTCUSDT")  
     pass

@@ -215,7 +215,7 @@ def graph2(tradingpair, mode="short_term"):
 
 if __name__ == "__main__":
 
-	# symbols = get_USD_symbols("spot", tradingpair="USD")
-	# scan_binance_listing_trends(symbols, "USD")
-	# graph('USD')
+	symbols = get_USD_symbols("spot", tradingpair="USD")
+	scan_binance_listing_trends(symbols, "USD")
+	graph('USD')
 	graph2('USD')

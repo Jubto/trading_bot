@@ -421,10 +421,12 @@ class Notification_server():
         '''Returns the date of the latest peak, how many days ago, the price it was, the score, the timeframe scores, the max gains since then, the current gains'''
 
         blocksize = 25000
-        monitored_symbols = set([symbol_tf.split('_')[0] for symbol_tfs in self.monitored_coins.values() for symbol_tf in symbol_tfs])
-        for symbol in monitored_symbols:
-            self.coin_objs[symbol[:3]].compute_historical_score(symbol)
-            with open(self.data_path + f'/{symbol[:3]}/historical/{symbol}_historical_scoring.csv') as f:
+        monitored_symbols = set([f'{coin}_{symbol_tf.split("_")[0]}' for coin, symbol_tfs in self.monitored_coins.items() for symbol_tf in symbol_tfs])
+        for coin_symbol in monitored_symbols:
+            coin, symbol = coin_symbol.split('_')
+            trading_pair = symbol.split(coin)[-1]
+            self.coin_objs[coin].compute_historical_score(symbol)
+            with open(self.data_path + f'/{coin}/historical/{symbol}_historical_scoring.csv') as f:
                 header_chunk = f.read(500).split('\n')
                 header_len = len(header_chunk[0].split(','))
                 timeframes = [col.split('_')[1] for col in header_chunk[0].split(',')[5:-1:2]]
@@ -448,7 +450,7 @@ class Notification_server():
                         if len(row) != header_len:
                             continue
                         peak_buffer -= 1
-                        score = int(row[2]) if int(row[2]) > int(row[3]) else int(row[3])
+                        score = max(int(row[2]), int(row[3]))
                         best_price[0] = min(best_price[0], float(row[1]))
                         best_price[1] = max(best_price[1], float(row[1]))
                         if score >= threshold and score > peak:
@@ -459,20 +461,25 @@ class Notification_server():
                             peak_buffer = 12
                             continue
                         elif peak and not peak_buffer:
-                            mood = 'SELL' if int(peak_row[2]) > int(peak_row[3]) else 'BUY'
-                            desired_assest = symbol[:3] if mood == 'SELL' else symbol[3:]
-                            max_gain = 100 - (best_price_snapshot[0] / peak_price)*100 if mood == 'SELL' else (best_price_snapshot[1] / peak_price)*100 - 100
-                            best_gain_price = best_price_snapshot[0] if mood == 'SELL' else best_price_snapshot[1]
-                            current_gain = 100 - (float(latest_row[1]) / peak_price)*100 if mood == 'SELL' else (float(latest_row[1]) / peak_price)*100 - 100
-                            tf_indexs = list(range(5, len(peak_row) - 1 ,2)) if mood == 'BUY' else list(range(6, len(peak_row) - 1 ,2))
+                            signal = 'SELL' if int(peak_row[2]) > int(peak_row[3]) else 'BUY'
+                            alt_action = 'BUY' if signal == 'SELL' else 'SELL'
+                            desired_assest = coin if signal == 'SELL' else trading_pair
+                            # max_gain = 100 - (best_price_snapshot[0] / peak_price)*100 if signal == 'SELL' else (best_price_snapshot[1] / peak_price)*100 - 100
+                            # best_gain_price = best_price_snapshot[0] if signal == 'SELL' else best_price_snapshot[1]
+                            # current_gain = 100 - (float(latest_row[1]) / peak_price)*100 if signal == 'SELL' else (float(latest_row[1]) / peak_price)*100 - 100
+                            # The gain you get from responding to the latest signal (i.e. if signal was SELL, then the gain you make from BUYing now)
+                            max_gain = (peak_price / best_price_snapshot[0])*100 - 100 if signal == 'SELL' else (best_price_snapshot[1] / peak_price)*100 - 100
+                            best_gain_price = best_price_snapshot[0] if signal == 'SELL' else best_price_snapshot[1]
+                            current_gain = (peak_price / float(latest_row[1]))*100 - 100 if signal == 'SELL' else (float(latest_row[1]) / peak_price)*100 - 100                            
+                            tf_indexs = list(range(5, len(peak_row) - 1 ,2)) if signal == 'BUY' else list(range(6, len(peak_row) - 1 ,2))
                             tf_scores = [f'{timeframes[i]}: {score}' for i, score in enumerate([peak_row[i] for i in tf_indexs])]
                             uts = int(peak_row[0][:-3])
                             delta = int((datetime.now() - datetime.fromtimestamp(uts)).total_seconds() // 3600)
                             date = datetime.fromtimestamp(uts).strftime('%d/%m/%y %a %I:%M %p')
                             print(f'\n===================================== Signals for {symbol} =====================================')
-                            print(f'{mood} signal {delta} hours ago at {date}')
+                            print(f'{signal} signal {delta} hours ago at {date}')
                             print(f'Price was: {peak_row[1]}, score: {peak}/{max_score}, change score: {peak_row[4]}/{max_score}, timeframe scores: {", ".join(tf_scores)}')
-                            print(f'Max gain of {desired_assest} would be {max_gain:.2f}% at ${best_gain_price}, gain now of {desired_assest} is {current_gain:.2f}% at ${latest_row[1]}\n')
+                            print(f'Max gain from {alt_action} would be {max_gain:.2f}% of {desired_assest} at ${best_gain_price}, gain now from {alt_action} is {current_gain:.2f}% of {desired_assest} at ${latest_row[1]}\n')
                             next_block = -1000
                             break
 
@@ -969,6 +976,8 @@ class Notification_server():
 
 #TODO add a current score interval boost mode, i.e. make the stdout calculate score once every 5 sec instead of 5min
 
+#TODO from the email side, make a PING command to check whether server is running
+# RESTART 
 
 if __name__ == '__main__':
     # Example: <python3 notification_server.py BTC LTC ETH INJ>
