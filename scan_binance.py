@@ -195,11 +195,11 @@ def graph2(tradingpair, mode="short_term"):
 				plt.plot([5, 5], [0, 26], linestyle="--")
 				# plt.text(5, 15, datetime.utcfromtimestamp((utx/1000)).year)
 				newyear = False
-			plt.axvspan(0, 4, facecolor='r', alpha=0.5)
+			plt.axvspan(0, 4, ymax=1, color ='yellow', alpha=0.1)
 		elif month <= 6:
 			if prev_quater <= 3:
 				prev_quater = 6
-				plt.axvspan(0, 4, facecolor='r', alpha=0.5)
+				plt.axvspan(8, 16, ymax=1, color ='yellow', alpha=0.1)
 			pass
 		elif month <= 9:
 			pass
@@ -215,7 +215,7 @@ def graph2(tradingpair, mode="short_term"):
 
 if __name__ == "__main__":
 
-	symbols = get_USD_symbols("spot", tradingpair="USD")
-	scan_binance_listing_trends(symbols, "USD")
-	graph('USD')
+	# symbols = get_USD_symbols("spot", tradingpair="USD")
+	# scan_binance_listing_trends(symbols, "USD")
+	# graph('USD')
 	graph2('USD')

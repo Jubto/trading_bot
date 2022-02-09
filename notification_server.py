@@ -387,7 +387,7 @@ class Notification_server():
             print('Invalid query, please enter a symbol (coin_pair) E.g. `retain BTC_USDT`\n')
             return
         
-        self.coin_objs[coin].retain_score(symbol)
+        self.coin_objs[coin].generate_retain_score(symbol)
         print(f'Retain score summary for {symbol} has completed. See file located at: {self.data_path}/{coin}/historical/{symbol}_retain_scoring.csv')
 
 

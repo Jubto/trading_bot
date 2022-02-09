@@ -1,6 +1,7 @@
 from binance.exceptions import BinanceAPIException # Third party 
 from config import client
-from enums import INTERVALS, EARLIEST_DATE
+from enums import INTERVALS, EARLIEST_DATE, BEAR_MARKETS, BULL_MARKETS
+from utility import filter_market_periods
 from glob import glob
 from time import time
 from datetime import datetime
@@ -8,6 +9,7 @@ from collections import defaultdict
 from statistics import stdev
 from numpy import nan, arange
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import pandas as pd
 import bisect
 import json 
@@ -39,7 +41,7 @@ class Coin():
         self.deafult_scoring_timeframes = ['1h', '4h', '12h', '1d', '3d'] # deafult set of timeframes used to compute score
         if not os.path.exists(self.coin_path):
             os.mkdir(self.coin_path)
-            open(f'{self.coin_path}/stats_{self.coin}.json', 'w').close() # TODO maybe
+            open(f'{self.coin_path}/stats_{self.coin}.json', 'w').close() # TODO maybe - probably not, all this data can be stored in trading_simulation csv
 
 
     def get_candles(self, tradingpair, intervals = []):
@@ -540,7 +542,7 @@ class Coin():
             json.dump(historical_percent_changes, jf, indent=4) 
 
 
-    def look_ahead_gains(self, symbol, custom_timeframes = [], custom_filename = "", peak_start_only = False, threshold=0.5):
+    def generate_look_ahead_gains(self, symbol, custom_timeframes = [], custom_filename = "", peak_start_only = False, threshold=0.5):
         '''Searches through specificed historical_scoring csv to find bull/bear score peaks over a certain thresold.
         Once found, it calculates the % difference of if you sold/bought after 30min, 1h, 4h, 1d, 3d, 1w, 2w.
         Saves the data in 'look_ahead_gains.csv'
@@ -618,14 +620,14 @@ class Coin():
                         look_ahead = 0
 
 
-    def retain_score(self, symbol, custom_timeframes = [], custom_filename = ""):
+    def generate_retain_score(self, symbol, custom_timeframes = [], custom_filename = ""):
         '''Creates a score file summarising the data in look_ahead_gains.csv for given symbol
         '''
 
         print('computing retain score...')
         retain_score_csv = f"{self.coin_path}/historical/{symbol}_retain_scoring{custom_filename}.csv"
         look_ahead_gains_csv = f"{self.coin_path}/historical/{symbol}_look_ahead_gains{custom_filename}.csv"
-        self.look_ahead_gains(symbol, custom_timeframes, custom_filename)
+        self.generate_look_ahead_gains(symbol, custom_timeframes, custom_filename)
 
         bullscore_bestgain = defaultdict(list) # key = score, value = list of best %gains
         bearscore_bestgain = defaultdict(list)
@@ -665,34 +667,146 @@ class Coin():
             outfile.write("="*130)
 
 
+    def simulate_trading(self, symbol, top_x=20, delay_trading=0, custom_timeframes = [], custom_filename = "", single_threshold='', single_metric='overall'):
+
+        stats_path = f'{self.coin_path}/historical/{symbol}_historical_scoring.csv'
+        historical_DF = pd.read_csv(stats_path, index_col= 0, usecols=[0, 1, 2, 3, 4], header=None, skiprows=1)
+
+        with open(f'/home/jubto/projects/testings/{symbol}_historical_scoring.csv', 'r') as f:
+            cols = f.readline() #TODO need better way of doing this
+
+        max_threshold = int((len(cols.split(',')) - 6)*3) #TODO get from filename, i.e. timeframes within filename
+        trading_pair = 'USDT'
+        inital_coin_price = historical_DF.iloc[0, 0]
+        inital_pair_holdings = 10000 if trading_pair in ['USDT', 'BUSD'] else 5
+        inital_coin_holdings = round(10000 / inital_coin_price, 3)
+        start_uts = historical_DF.iloc[0].name
+        final_uts = historical_DF.iloc[-1].name
+        delay_trading *= 2016
+        summary = {'overall':{}, 'max':{}}
+        analysis_cols = {}
+        strict = True
+
+        bull_start_threshold = 2 if not single_threshold else int(single_threshold.split('|')[0].split(':')[-1])
+        bull_end_threshold = max_threshold if not single_threshold else bull_start_threshold + 1
+
+        bear_start_threshold = 2 if not single_threshold else int(single_threshold.split(':')[-1])
+        bear_end_threshold = max_threshold if not single_threshold else bear_start_threshold + 1
+
+        for bull_threshold in range(bull_start_threshold, bull_end_threshold):
+            for bear_threshold in range(bear_start_threshold, bear_end_threshold):
+                move_made = False
+                signal = ''
+                prev_signal = 'SELL'
+                prev_bull_peak = 0
+                prev_bear_peak = 0
+                prev_price = 0
+                holdings = 10000 if trading_pair in ['USDT', 'BUSD'] else 5 # Alternates between coin and pair.
+                strat = f'BULL:{bull_threshold}|BEAR:{bear_threshold}'
+                analysis_cols[strat] = [[
+                    f'UTS_{strat}',
+                    'prev_price',
+                    'price',
+                    'action',
+                    'coin_holdings',
+                    'pair_holdings',
+                    'action_coin_profit',
+                    'action_pair_profit',
+                    'action_coin_gain',
+                    'action_pair_gain'
+                ]]
+                analysis_cols[f'{strat}_holdings_log'] = []
+
+                for row in historical_DF.iloc[delay_trading:].itertuples(name=None):
+                    bull_score = row[2] # i.e. massive surge up, hence you want to SELL
+                    bear_score = row[3] # i.e. massive surge down, hence you want to BUY
+                    if bull_score >= bull_threshold and bear_score >= bear_threshold:
+                        continue # indecision
+                    if strict:
+                        if bull_score >= bull_threshold and bull_score > bear_score:
+                            signal = 'SELL'
+                        elif bear_score >= bear_threshold and bear_score > bull_score:
+                            signal = 'BUY'
+                    else:
+                        if bull_score >= bull_threshold:
+                            signal = 'SELL'
+                        elif bear_score >= bear_threshold:
+                            signal = 'BUY'
+                    if prev_signal != signal:
+                        if bull_score >= bull_threshold or bear_score >= bear_threshold:
+                            if not move_made:
+                                move_made = True
+                                coin_holdings, coin_profit, coin_gain, pair_holdings, pair_profit, pair_gain = 0, 0, 0, 0, 0, 0
+                                if prev_price == 0:
+                                    prev_price = row[1]
+                                if signal == 'BUY':
+                                    coin_holdings = round(holdings / row[1], 5)
+                                    coin_profit = round(coin_holdings - (holdings / prev_price), 5)
+                                    coin_gain = round((prev_price / row[1])*100 - 100, 3)
+                                else:
+                                    pair_holdings = round(holdings * row[1], 5)
+                                    pair_profit = round(pair_holdings - (holdings * prev_price), 5)
+                                    pair_gain = round((row[1] / prev_price)*100 - 100, 3)
+                                analysis_cols[strat].append([
+                                    row[0],
+                                    prev_price,
+                                    row[1],
+                                    signal,
+                                    coin_holdings,
+                                    pair_holdings,
+                                    coin_profit,
+                                    pair_profit,
+                                    coin_gain,
+                                    pair_gain
+                                ])
+                                analysis_cols[f'{strat}_holdings_log'].append(coin_holdings)
+                                holdings = coin_holdings if coin_holdings else pair_holdings
+                                prev_price = row[1]
+                                prev_bull_peak = bull_score
+                                prev_bear_peak = bear_score
+                        elif prev_bull_peak >= bull_threshold or prev_bear_peak >= bear_threshold:
+                            prev_signal = signal
+                            prev_bull_peak = 0
+                            prev_bear_peak = 0
+                            move_made = False            
+                summary['overall'][strat] = analysis_cols[strat][-1][4] if analysis_cols[strat][-1][4] else analysis_cols[strat][-2][4]
+                summary['max'][strat] = max(analysis_cols[f'{strat}_holdings_log'])
+
+        sorted_summary = {'overall':{}, 'max':{}}
+        sorted_summary['overall'] = {k: v for k, v in sorted(summary['overall'].items(), key=lambda kv: kv[1], reverse=True)}
+        sorted_summary['max'] = {k: v for k, v in sorted(summary['max'].items(), key=lambda kv: kv[1], reverse=True)}
+
+        if single_threshold:
+            analysis_cols['metric'] = single_metric
+            return analysis_cols[sorted_summary[single_metric].popitem()[0]]
+        for metric, sorted_strats in sorted_summary.items():
+            with open(f'/home/jubto/projects/testings/simulation_tests/{symbol}_top{top_x}_{metric}.csv', 'w') as f:
+                csv_writer = csv.writer(f, delimiter=',')
+                csv_writer.writerow([
+                    'inital_coin',
+                    inital_coin_holdings,
+                    'inital_pair',
+                    inital_pair_holdings,
+                    'start_uts',
+                    start_uts,
+                    'final_uts',
+                    final_uts
+                ])
+                for rank, strat in enumerate(sorted_strats, start=1):
+                    for row in analysis_cols[strat]:
+                        csv_writer.writerow(row)
+                    if rank == top_x:
+                        break
+
+
     def optimise_signal_threshold(self, symbol, custom_filename = ""):
-        pass
-
-    # Go back and sum all %gain and %loss for each stretegy, for each threshold set
-    # strategy: peak_start, peak_end (first 5m without it), peak_top (else peak_end)
-
-    # returns best peak strategy, and best thresold, the best possible profit from all combinations
-    # plus generates two kinds of graphs
-    # Y-axis %total gain, x-axis time, line graph title strategy -> showing whether the signals improve overtime, graph them all (different threshold) ontop of each other
-        # trying to determine how total performance changes with time
-    # y-axis % total gain, x-axis thresholds, bar graph - multiple bars per interval, where each bar is from a different strategy
-
-        # Plan:
-        # We need to start at 0% gain, and wait until we get our first BUY signal -> then from there start calculating gains
-        # Each time the next signal comes, check if it's the opposite signal, i.e. if prev was BUY, wait only for SELL, etc.
-        # Once next sigal comes, keep track of three options: either BUY/SELL the moment the signal comes, or when the signal ends, or when a possible peak comes
-        # Each time we make a move, store the % gain/loss of that move, profit/loss, TOTAL sum gain/loss, timestamp, threshold, strategy
-        # DF columns: UTS, strat, threshold, %gain/loss from move, profit/loss from move, TOTAL sum %gain/loss, TOTAL sum profit/loss
-        # Keep doing this until the end, and then repeat for each threshold 
+        # This function will return the optimal threshold for the given symbol + timeframe + metric (overall or max)
+        # i.e. specifically returns the rank1 best threshold. So simple function
+        # Thus, we need to check whether there's a trading_simulation file in the db for this symbol + timeframe
+        # hence we need to store the timeframes used in the filename
 
         #NOTE: possibly consider trying to integrate whether indivdual timeframe scores have an effect
-        # NOTE: after a best threshold is determined (if there is one) then run the simulation again, but consider change score too 
-
-        historical_score_csv = f"{self.coin_path}/historical/{symbol}_historical_scoring{custom_filename}.csv"
-        historical_scoring_DF = pd.read_csv(historical_score_csv, index_col= 0, usecols=[], header=None, skiprows=1)
-
-
-
+        pass
 
     def graph_historical_data(self, symbol, graph_type="bar", custom_timeframes = [], custom_filename = ""):
         '''Generates either a bar graph or line graph summarising the potential gains from buying/selling at the given score peaks.
@@ -700,7 +814,7 @@ class Coin():
 
         print('computing graph...')
         look_ahead_gains_csv = f"{self.coin_path}/historical/{symbol}_look_ahead_gains{custom_filename}.csv"
-        self.look_ahead_gains(symbol, custom_timeframes, custom_filename)
+        self.generate_look_ahead_gains(symbol, custom_timeframes, custom_filename)
 
         make_dict = lambda : {"30m":[], "1h":[], "4h":[], "1d":[], "3d":[], "1w":[], "2w":[]}
         best_gains = {"buy_back":defaultdict(make_dict), "sell_later":defaultdict(make_dict)}
@@ -757,12 +871,147 @@ class Coin():
         ax_bear.set_title("Sell-later graph", fontweight="demi", size="xx-large", y=1.025)
 
         plt.savefig(f"{self.coin_path}/historical/{symbol}_scoring_graph{custom_filename}.png")
+        #TODO I think for all analysis related files, also save the timeframes within the filename itself
+
+    
+    def graph_trading_simulation(self, symbol, mode='strict', top_x=20, custom_filename=''):
+        '''Graphs out the percentage gain compared to inital holding from blindly trading the signals generated by thresholds
+        Specifically, this graphs the gains of the coin of interest, as well as its tradingpair. The first graph is the best overall
+        performing thresholds, the second graph is this same graph however showing the tradingpair gains, and the final graph is
+        the thresholds which resulted in the highest historical gains.'''
+
+        fig, (ax_overall, ax_pair, ax_max) = plt.subplots(nrows= 3, ncols= 1, figsize=(25, 21))
+        for metric in ['overall', 'max']:
+            with open(f'/home/jubto/projects/trading_bot/coindata/INJ/historical/{symbol}_top{top_x}_{metric}.csv', 'r') as f:
+                header = f.readline().split(',')
+                inital_coin_holding = float(header[1])
+                inital_pair_holding = float(header[3])
+                start_uts = datetime.fromtimestamp(int(header[5][:-3]))
+                final_uts = datetime.fromtimestamp(int(header[-1].strip()[:-3]))
+                bear_markets = filter_market_periods(BEAR_MARKETS, start_uts, final_uts)
+                bull_markets = filter_market_periods(BULL_MARKETS, start_uts, final_uts)
+                csv_reader = csv.reader(f)
+                strat_dict = {}
+                for row in csv_reader:
+                    uts = row[0]
+                    coin_holding = row[4]
+                    pair_holding = row[5]
+                    if coin_holding == '0':
+                        if metric != 'overall':
+                            continue
+                        strat_dict[strat]['pair_uts'].append(datetime.fromtimestamp(int(uts[:-3])))
+                        strat_dict[strat]['pair_holding_gains'].append(round((float(pair_holding) / inital_pair_holding)*100 - 100, 2))
+                        strat_dict[strat]['pair_successful_trades'] += 1 if '-' != row[-1][0] else 0
+                    elif 'UTS' in uts:
+                        strat = uts.split('_')[-1]
+                        strat_dict[strat] = {
+                            'coin_uts':[],
+                            'coin_holding_gains':[],
+                            'coin_successful_trades':0,
+                            'pair_uts':[],
+                            'pair_holding_gains':[],
+                            'pair_successful_trades':0
+                        }
+                    else:
+                        strat_dict[strat]['coin_uts'].append(datetime.fromtimestamp(int(uts[:-3])))
+                        strat_dict[strat]['coin_holding_gains'].append(round((float(coin_holding) / inital_coin_holding)*100 - 100, 2))
+                        strat_dict[strat]['coin_successful_trades'] += 1 if '-' != row[-2][0] else 0
+                if metric == 'overall':
+                    # plotting for overall best performing thresholds for coin
+                    for strat, data in strat_dict.items():
+                        success_ratio = round(strat_dict[strat]["coin_successful_trades"]/len(data["coin_uts"]), 2)
+                        ax_overall.plot(
+                            data['coin_uts'],
+                            data['coin_holding_gains'],
+                            label=f'{strat:<16} {len(data["coin_uts"]):<5} {success_ratio:<5} {int(data["coin_holding_gains"][-1])}'
+                        )
+                        success_ratio = round(strat_dict[strat]["pair_successful_trades"]/len(data["pair_uts"]), 2)
+                        ax_pair.plot(
+                            data['pair_uts'],
+                            data['pair_holding_gains'],
+                            label=f'{strat:<16} {len(data["pair_uts"]):<5} {success_ratio:<5} {int(data["pair_holding_gains"][-1])}'
+                        )
+                    for bear_market in bear_markets:
+                        ax_overall.axvspan(*bear_market, ymax=1, color ='firebrick', alpha=0.1)
+                    for bull_market in bull_markets:
+                        ax_overall.axvspan(*bull_market, ymax=1, color ='limegreen', alpha=0.1)
+                    for label in ax_overall.get_xticklabels(which='major'):
+                        label.set(rotation=30, horizontalalignment='right')
+                    ax_overall.plot([start_uts, final_uts], [0, 0], linestyle="--", color='yellowgreen')
+                    ax_overall.plot([start_uts, final_uts], [100, 100], linestyle="--", color='mediumspringgreen')
+                    ax_overall.plot([start_uts, final_uts], [-100, -100], linestyle="--", color='red')
+                    ax_overall.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b'))
+                    ax_overall.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+                    ax_overall.xaxis.set_minor_locator(mdates.MonthLocator(interval=1))
+                    ax_overall.margins(x=0.01)
+
+                    # plotting for overall best performing thresholds for pair
+                    for bear_market in bear_markets:
+                        ax_pair.axvspan(*bear_market, ymax=1, color ='firebrick', alpha=0.1)
+                    for bull_market in bull_markets:
+                        ax_pair.axvspan(*bull_market, ymax=1, color ='limegreen', alpha=0.1)
+                    for label in ax_pair.get_xticklabels(which='major'):
+                        label.set(rotation=30, horizontalalignment='right')
+                    ax_pair.plot([start_uts, final_uts], [0, 0], linestyle="--", color='yellowgreen')
+                    ax_pair.plot([start_uts, final_uts], [100, 100], linestyle="--", color='mediumspringgreen')
+                    ax_pair.plot([start_uts, final_uts], [-100, -100], linestyle="--", color='red')
+                    ax_pair.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b'))
+                    ax_pair.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+                    ax_pair.xaxis.set_minor_locator(mdates.MonthLocator(interval=1))
+                    ax_pair.margins(x=0.01)
+                else:
+                    # plotting for highest max gains achieved thresholds
+                    for strat, data in strat_dict.items():
+                        success_ratio = round(strat_dict[strat]["coin_successful_trades"]/len(data["coin_uts"]), 2)
+                        ax_max.plot(
+                            data['coin_uts'],
+                            data['coin_holding_gains'],
+                            label=f'{strat:<16} {len(data["coin_uts"]):<5} {success_ratio:<5} {int(max(data["coin_holding_gains"]))}'
+                        )
+                    for bear_market in bear_markets:
+                        ax_max.axvspan(*bear_market, ymax=1, color ='firebrick', alpha=0.1)
+                    for bull_market in bull_markets:
+                        ax_max.axvspan(*bull_market, ymax=1, color ='limegreen', alpha=0.1)
+                    for label in ax_max.get_xticklabels(which='major'):
+                        label.set(rotation=30, horizontalalignment='right')
+                    ax_max.plot([start_uts, final_uts], [0, 0], linestyle="--", color='yellowgreen')
+                    ax_max.plot([start_uts, final_uts], [100, 100], linestyle="--", color='mediumspringgreen')
+                    ax_max.plot([start_uts, final_uts], [-100, -100], linestyle="--", color='red')
+                    ax_max.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b'))
+                    ax_max.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+                    ax_max.xaxis.set_minor_locator(mdates.MonthLocator(interval=1))
+                    ax_max.margins(x=0.01)
+
+        ax_overall.set_title(f"{symbol}: {self.coin} trading graph overall best {self.coin} gain thresholds",fontweight="demi", size="xx-large", y=1.025)
+        ax_overall.set_ylabel(f"% {self.coin} gain from inital", fontweight="demi", size="xx-large")
+        ax_overall.legend(title=f"Top {top_x} strats | trades | SR | %gain", title_fontsize="x-large",
+                                        fontsize='large', shadow=True, fancybox=True, bbox_to_anchor=(1.025, 1.025))
+
+        ax_pair.set_title(f"{symbol}: {symbol.split(self.coin)[-1]} trading graph for overall best {self.coin} gain thresholds", fontweight="demi", size="xx-large", y=1.025)
+        ax_pair.set_ylabel(f"% {symbol.split(self.coin)[-1]} gain from inital", fontweight="demi", size="xx-large")
+        ax_pair.set_xlabel("Time", fontweight="demi", size="x-large")
+        ax_pair.legend(title=f"Top {top_x} strats | trades | SR | %gain", title_fontsize="x-large",
+                                        fontsize='large', shadow=True, fancybox=True, bbox_to_anchor=(1.02, 1.025))
+
+        ax_max.set_title(f"{symbol}: {self.coin} trading graph for highest max {self.coin} gain thresholds", fontweight="demi", size="xx-large", y=1.025)
+        ax_max.set_ylabel(f"% {self.coin} gain from inital", fontweight="demi", size="xx-large")
+        ax_max.set_xlabel("Time", fontweight="demi", size="x-large")
+        ax_max.legend(title=f"Top {top_x} strats | trades | SR | %gain", title_fontsize="x-large",
+                                        fontsize='large', shadow=True, fancybox=True, bbox_to_anchor=(1.02, 1.025))
+
+        plt.tight_layout(pad=2) 
+        plt.savefig(f"/home/jubto/projects/trading_bot/coindata/INJ/historical/{symbol}_{mode}_graph.png")
 
 
     def graph_signal_against_pa(self, symbol, custom_timeframes = [], custom_filename = ""):
         ''''''
         # map signals against real candle PA, however also map a little mark for each max gain after signal before the next signal
         # signals will be background vertical lines, max gains can just be a tiny red dotted line or something
+
+        # Deafult run will make a graph with BEST overall threshold trades superimposed
+        # but you can change settings to be BEST max thresholds
+        # and you can specify the threshold settings too
+        # The default run will use the optimise_threshold function to just find the best threshold
         pass
 
     
@@ -869,23 +1118,28 @@ class Coin():
         # Makes descisions based on combining fib, bull/bear, history, and horitizonal supports/volumns
         # needs to pass on to bot the following info:
             # coin/symbol, holdings
+
+        # interface with trading_bot class
             
 
-    def profits(self):
+    def view_profits(self):
         pass
         # returns profits for the given coin
+        # interface with trading_bot class
 
 
     def add_holdings(self):
-        
+        # interface with trading_bot class
         pass
 
 
-    def remove_holdsing(self):
+    def remove_holdings(self):
+        # interface with trading_bot class
         pass
 
 
-    def trade_histroy(self):
+    def view_trade_histroy(self):
+        # interface with trading_bot class
         pass
         #returns the trades recorded by the trading bot
 
@@ -893,23 +1147,23 @@ class Coin():
 if __name__ == "__main__":
     coin = Coin('INJ')
     # coin.compute_historical_score('INJUSDT')
-    # # coin.look_ahead_gains("INJUSDT", peak_start_only=True, custom_filename="peak_start_only")
-    # coin.look_ahead_gains("INJUSDT")
-    # coin.retain_score("INJUSDT")
+    # # coin.generate_look_ahead_gains("INJUSDT", peak_start_only=True, custom_filename="peak_start_only")
+    # coin.generate_look_ahead_gains("INJUSDT")
+    # coin.generate_retain_score("INJUSDT")
     # # coin.graph_historical_data("INJUSDT", custom_filename="peak_start_only")
-    # # coin.look_ahead_gains("INJUSDT")
+    # # coin.generate_look_ahead_gains("INJUSDT")
     coin.graph_historical_data("INJUSDT", graph_type="bar")
 
     # # btc
     # coin.compute_historical_score('INJBTC')
-    # coin.look_ahead_gains("INJBTC")
-    # coin.retain_score("INJBTC")
+    # coin.generate_look_ahead_gains("INJBTC")
+    # coin.generate_retain_score("INJBTC")
     # coin.graph_historical_data("INJBTC")    
     
 
     # coin.compute_historical_score('INJUSDT', custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')
-    # coin.look_ahead_gains("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')
-    # coin.retain_score("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')
+    # coin.generate_look_ahead_gains("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')
+    # coin.generate_retain_score("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')
     # coin.graph_historical_data("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')   
     # coin.analyse_peaks('INJUSDT', custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')     
 
@@ -917,7 +1171,7 @@ if __name__ == "__main__":
     #BTC
     # coin = Coin('BTC')
     # coin.compute_historical_score('BTCUSDT')
-    # coin.look_ahead_gains("BTCUSDT")
-    # coin.retain_score("BTCUSDT")
+    # coin.generate_look_ahead_gains("BTCUSDT")
+    # coin.generate_retain_score("BTCUSDT")
     # coin.graph_historical_data("BTCUSDT")  
     pass
