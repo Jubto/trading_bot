@@ -36,12 +36,23 @@ class Coin():
         self.coin = coin.upper()
         self.holdings = None
         self.coin_path = os.path.dirname(os.path.realpath(__file__)) + f"/coindata/{self.coin}"
+        self.analysis_path = f'{self.coin_path}/analysis'
+        self.historical_scoring_path = f'{self.analysis_path}/historical_scorings'
+        self.look_ahead_path = f'{self.analysis_path}/look_aheads'
+        self.retain_scoring_path = f'{self.analysis_path}/retain_scorings'
+        self.trading_simulation_path = f'{self.analysis_path}/trading_simulations'
+        self.graph_path = f'{self.analysis_path}/graphs'
         self.json_file = f"{self.coin_path}/analysis_{self.coin}.json"
         self.previous_update_UTS = None
         self.deafult_scoring_timeframes = ['1h', '4h', '12h', '1d', '3d'] # deafult set of timeframes used to compute score
         if not os.path.exists(self.coin_path):
             os.mkdir(self.coin_path)
-            open(f'{self.coin_path}/stats_{self.coin}.json', 'w').close() # TODO maybe - probably not, all this data can be stored in trading_simulation csv
+            os.mkdir(self.analysis_path)
+            os.mkdir(self.historical_scoring_path)
+            os.mkdir(self.look_ahead_path)
+            os.mkdir(self.retain_scoring_path)
+            os.mkdir(self.trading_simulation_path)
+            os.mkdir(self.graph_path)
 
 
     def get_candles(self, tradingpair, intervals = []):
@@ -375,7 +386,7 @@ class Coin():
         return analysis # final index represents type of information
 
     
-    def compute_historical_score(self, symbol, custom_timeframes = [], custom_filename = "", threshold=0.5):
+    def compute_historical_score(self, symbol, custom_timeframes = [], threshold=0.5):
         '''Calculates bull/bear/change_scorement score for all 5 minute intervals of the coins history.
         Each 5 minutes simulates running the current score method back in time, with information known only back during the 5minute interval
         Bull/Bear score indicates how well the current price action performs compared to all histortical candle data
@@ -386,10 +397,13 @@ class Coin():
         self.update() # Get latest candles from Binance
         self.get_candles(symbol.split(self.coin)[-1], intervals=["5m"]) # update latest 5min data - this may take time due to Binance
         print('Latest candle data aquired! Comencing score calculation...')
+        filename_ext = ''
         if custom_timeframes:
             symbol_timeframes = sorted([symbol + '_' + timeframe for timeframe in custom_timeframes], key= lambda i : INTERVALS.index(i.split("_")[-1]))
+            filename_ext = '-'.join(custom_timeframes)
         else:
             symbol_timeframes = [symbol + '_' + timeframe for timeframe in self.deafult_scoring_timeframes]
+            filename_ext = '-'.join(self.deafult_scoring_timeframes)
         bull_threshold = int((len(symbol_timeframes)*6)*threshold)
         bear_threshold = int((len(symbol_timeframes)*6)*threshold)
     
@@ -415,8 +429,8 @@ class Coin():
 
         # Load from previous data and skip until new data, else perform initilisation if no prior historical analysis found (skipping first 3 days due to messness)
         df_positiontracker = {} # To complement the symbol_timeframes_DF dataframe
-        historical_scoring_csv_path = f"{self.coin_path}/historical/{symbol}_historical_scoring{custom_filename}.csv"
-        historical_analysis_json_path = f"{self.coin_path}/historical/{symbol}_historical_analysis{custom_filename}.json"
+        historical_scoring_csv_path = f"{self.historical_scoring_path}/{symbol}/historical_scoring_{symbol}_{filename_ext}.csv"
+        historical_analysis_json_path = f"{self.historical_scoring_path}/{symbol}/historical_analysis_{symbol}_{filename_ext}.json"        
         if os.path.exists(historical_scoring_csv_path):
             with open(historical_analysis_json_path, 'r') as jf:
                 historical_percent_changes = json.load(jf) 
@@ -441,8 +455,8 @@ class Coin():
                         "columns": columns}		
         else:
             # initialise dataframe and json for the first 3 -> 21 days of price action 
-            if not os.path.exists(self.coin_path + '/historical'):
-                os.mkdir(self.coin_path + '/historical')
+            if not os.path.exists(f'{self.historical_scoring_path}/{symbol}'):
+                os.mkdir(f'{self.historical_scoring_path}/{symbol}')
             first_3day_UTS = int(symbol_timeframes_DF.loc[3, [symbol + '_1d-UTS']]) # The first few days of price action are unreliable due to volitility in general
             skip_UTS = int(symbol_timeframes_DF.loc[21, [symbol + '_1d-UTS']]) # UTS date for 21 days of price action
             for symbol_timeframe in symbol_timeframes:
@@ -510,19 +524,16 @@ class Coin():
                     score_tracker[symbol_timeframe + "_BEAR"].append(score)
                     score_tracker[symbol_timeframe + "_BULL"].append(0)
                 total_change_score += change_score
-                # mood = 'BULL' if metric == "candle_max_up" else 'BEAR'
-                # print(f'{symbol_timeframe} current_UTS: {current_UTS} price>>>{price}<<< price change: {current_percent_change} mood: {mood} score: {score} change score: {change_score}, total bull: {total_bull} total bear: {total_bear}')
 
             bull_scores.append(total_bull)
             bear_scores.append(total_bear)
             change_scores.append(total_change_score)
-            if total_bull >= bull_threshold:
-                signal_tracker.append('SELL') # if you were to do signal strength, you'd do it here too looking at timeframe levels compared to good past scores
+            if total_bull >= bull_threshold: # TODO remove, deprecated by graphing PA with signals
+                signal_tracker.append('SELL')
             elif total_bear >= bear_threshold:
-                signal_tracker.append('BUY') # mark strength by number a number
+                signal_tracker.append('BUY')
             else:
                 signal_tracker.append('___')
-            # print(f'=====>>>>>>>> Appending Total bull: {total_bull}, appending total bear: {total_bear}, appending total change: {total_change_score} <<<<<<<<=====')
 
         if os.path.exists(historical_scoring_csv_path):
             columns = ["bull_scores", "bear_scores", "change_scores", *[timeframe for timeframe in score_tracker], "Signal"]
@@ -542,17 +553,19 @@ class Coin():
             json.dump(historical_percent_changes, jf, indent=4) 
 
 
-    def generate_look_ahead_gains(self, symbol, custom_timeframes = [], custom_filename = "", peak_start_only = False, threshold=0.5):
+    def generate_look_ahead_gains(self, symbol, custom_timeframes = [], peak_start_only = False, threshold=0.5):
         '''Searches through specificed historical_scoring csv to find bull/bear score peaks over a certain thresold.
         Once found, it calculates the % difference of if you sold/bought after 30min, 1h, 4h, 1d, 3d, 1w, 2w.
         Saves the data in 'look_ahead_gains.csv'
         '''
 
         print('computing look ahead gains...')
-        self.compute_historical_score(symbol, custom_timeframes, custom_filename)
-        threshold_score = int(threshold * (len(custom_timeframes) * 6)) if custom_timeframes else int(threshold * (len(self.deafult_scoring_timeframes) * 6)) #TODO make 0?
-        historical_score_csv = f"{self.coin_path}/historical/{symbol}_historical_scoring{custom_filename}.csv"
-        look_ahead_gains_csv = f"{self.coin_path}/historical/{symbol}_look_ahead_gains{custom_filename}.csv"
+        self.compute_historical_score(symbol, custom_timeframes)
+        threshold_score = int(threshold * (len(custom_timeframes) * 6)) if custom_timeframes else int(threshold * (len(self.deafult_scoring_timeframes) * 6))
+        filename_etx = '-'.join(custom_timeframes) if custom_timeframes else '-'.join(self.deafult_scoring_timeframes)
+        filename_etx += '_peakstart' if peak_start_only else ''
+        historical_score_csv = f"{self.historical_scoring_path}/{symbol}/historical_scoring_{symbol}_{filename_etx}.csv"
+        look_ahead_gains_csv = f"{self.look_ahead_path}/{symbol}/look_ahead_gains_{symbol}_{filename_etx}.csv"
         historical_scoring_DF = pd.read_csv(historical_score_csv, index_col= 0, header=None, skiprows=1)
 
         with open(look_ahead_gains_csv, 'a') as outfile, open(look_ahead_gains_csv, 'r') as infile:
@@ -620,14 +633,15 @@ class Coin():
                         look_ahead = 0
 
 
-    def generate_retain_score(self, symbol, custom_timeframes = [], custom_filename = ""):
+    def generate_retain_score(self, symbol, custom_timeframes = []):
         '''Creates a score file summarising the data in look_ahead_gains.csv for given symbol
         '''
 
         print('computing retain score...')
-        retain_score_csv = f"{self.coin_path}/historical/{symbol}_retain_scoring{custom_filename}.csv"
-        look_ahead_gains_csv = f"{self.coin_path}/historical/{symbol}_look_ahead_gains{custom_filename}.csv"
-        self.generate_look_ahead_gains(symbol, custom_timeframes, custom_filename)
+        filename_etx = '-'.join(custom_timeframes) if custom_timeframes else '-'.join(self.deafult_scoring_timeframes)
+        retain_score_csv = f"{self.retain_scoring_path}/{symbol}/retain_scoring_{symbol}_{filename_etx}.csv"
+        look_ahead_gains_csv = f"{self.look_ahead_path}/{symbol}/look_ahead_gains_{symbol}_{filename_etx}.csv"
+        self.generate_look_ahead_gains(symbol, custom_timeframes)
 
         bullscore_bestgain = defaultdict(list) # key = score, value = list of best %gains
         bearscore_bestgain = defaultdict(list)
@@ -667,16 +681,16 @@ class Coin():
             outfile.write("="*130)
 
 
-    def simulate_trading(self, symbol, top_x=20, delay_trading=0, custom_timeframes = [], custom_filename = "", single_threshold='', single_metric='overall'):
+    def simulate_trading(self, symbol, custom_timeframes = [], top_x=20, delay_trading=0, strict=True, single_threshold='', single_metric='overall'):
 
-        stats_path = f'{self.coin_path}/historical/{symbol}_historical_scoring.csv'
-        historical_DF = pd.read_csv(stats_path, index_col= 0, usecols=[0, 1, 2, 3, 4], header=None, skiprows=1)
+        filename_etx = '-'.join(custom_timeframes) if custom_timeframes else '-'.join(self.deafult_scoring_timeframes)
+        filename_etx += '' if strict else '_not_strict'
+        filename_etx += f'_delay_{delay_trading}weeks' if delay_trading else ''
+        historical_score_csv = f'{self.historical_scoring_path}/{symbol}/historical_scoring_{symbol}_{filename_etx}.csv'
+        historical_DF = pd.read_csv(historical_score_csv, index_col= 0, usecols=[0, 1, 2, 3, 4], header=None, skiprows=1)
 
-        with open(f'/home/jubto/projects/testings/{symbol}_historical_scoring.csv', 'r') as f:
-            cols = f.readline() #TODO need better way of doing this
-
-        max_threshold = int((len(cols.split(',')) - 6)*3) #TODO get from filename, i.e. timeframes within filename
-        trading_pair = 'USDT'
+        max_threshold = int(len(historical_score_csv.split('_')[-1].split('-')))
+        trading_pair = symbol.split(self.coin)[-1]
         inital_coin_price = historical_DF.iloc[0, 0]
         inital_pair_holdings = 10000 if trading_pair in ['USDT', 'BUSD'] else 5
         inital_coin_holdings = round(10000 / inital_coin_price, 3)
@@ -685,7 +699,6 @@ class Coin():
         delay_trading *= 2016
         summary = {'overall':{}, 'max':{}}
         analysis_cols = {}
-        strict = True
 
         bull_start_threshold = 2 if not single_threshold else int(single_threshold.split('|')[0].split(':')[-1])
         bull_end_threshold = max_threshold if not single_threshold else bull_start_threshold + 1
@@ -780,7 +793,7 @@ class Coin():
             analysis_cols['metric'] = single_metric
             return analysis_cols[sorted_summary[single_metric].popitem()[0]]
         for metric, sorted_strats in sorted_summary.items():
-            with open(f'/home/jubto/projects/testings/simulation_tests/{symbol}_top{top_x}_{metric}.csv', 'w') as f:
+            with open(f'{self.trading_simulation_path}/{symbol}/trade_simulation_{metric}_{symbol}_{filename_etx}.csv', 'w') as f:
                 csv_writer = csv.writer(f, delimiter=',')
                 csv_writer.writerow([
                     'inital_coin',
@@ -799,7 +812,7 @@ class Coin():
                         break
 
 
-    def optimise_signal_threshold(self, symbol, custom_filename = ""):
+    def optimise_signal_threshold(self, symbol, custom_timeframes = []):
         # This function will return the optimal threshold for the given symbol + timeframe + metric (overall or max)
         # i.e. specifically returns the rank1 best threshold. So simple function
         # Thus, we need to check whether there's a trading_simulation file in the db for this symbol + timeframe
@@ -808,13 +821,15 @@ class Coin():
         #NOTE: possibly consider trying to integrate whether indivdual timeframe scores have an effect
         pass
 
-    def graph_historical_data(self, symbol, graph_type="bar", custom_timeframes = [], custom_filename = ""):
+    def graph_look_ahead_data(self, symbol, graph_type="bar", custom_timeframes = []):
         '''Generates either a bar graph or line graph summarising the potential gains from buying/selling at the given score peaks.
             using from looking ahead data'''
 
         print('computing graph...')
-        look_ahead_gains_csv = f"{self.coin_path}/historical/{symbol}_look_ahead_gains{custom_filename}.csv"
-        self.generate_look_ahead_gains(symbol, custom_timeframes, custom_filename)
+        filename_etx = '-'.join(custom_timeframes) if custom_timeframes else '-'.join(self.deafult_scoring_timeframes)
+        filename_etx += '' if graph_type == 'bar' else '_line'
+        look_ahead_gains_csv = f"{self.look_ahead_path}/{symbol}/look_ahead_gains_{symbol}_{filename_etx}.csv"
+        self.generate_look_ahead_gains(symbol, custom_timeframes)
 
         make_dict = lambda : {"30m":[], "1h":[], "4h":[], "1d":[], "3d":[], "1w":[], "2w":[]}
         best_gains = {"buy_back":defaultdict(make_dict), "sell_later":defaultdict(make_dict)}
@@ -870,19 +885,19 @@ class Coin():
         ax_bear.set_xlabel("Bear Score", fontweight="demi", size="x-large")
         ax_bear.set_title("Sell-later graph", fontweight="demi", size="xx-large", y=1.025)
 
-        plt.savefig(f"{self.coin_path}/historical/{symbol}_scoring_graph{custom_filename}.png")
-        #TODO I think for all analysis related files, also save the timeframes within the filename itself
+        plt.savefig(f"{self.graph_path}/look_aheads/{symbol}/look_ahead_graph_{symbol}_{filename_etx}.png")
 
     
-    def graph_trading_simulation(self, symbol, mode='strict', top_x=20, custom_filename=''):
+    def graph_trading_simulation(self, symbol, custom_timeframes = [], top_x=20):
         '''Graphs out the percentage gain compared to inital holding from blindly trading the signals generated by thresholds
         Specifically, this graphs the gains of the coin of interest, as well as its tradingpair. The first graph is the best overall
         performing thresholds, the second graph is this same graph however showing the tradingpair gains, and the final graph is
         the thresholds which resulted in the highest historical gains.'''
 
+        filename_etx = '-'.join(custom_timeframes) if custom_timeframes else '-'.join(self.deafult_scoring_timeframes)
         fig, (ax_overall, ax_pair, ax_max) = plt.subplots(nrows= 3, ncols= 1, figsize=(25, 21))
         for metric in ['overall', 'max']:
-            with open(f'/home/jubto/projects/trading_bot/coindata/INJ/historical/{symbol}_top{top_x}_{metric}.csv', 'r') as f:
+            with open(f'{self.trading_simulation_path}/{symbol}/trade_simulation_{metric}_{symbol}_{filename_etx}.csv', 'r') as f:
                 header = f.readline().split(',')
                 inital_coin_holding = float(header[1])
                 inital_pair_holding = float(header[3])
@@ -1000,10 +1015,10 @@ class Coin():
                                         fontsize='large', shadow=True, fancybox=True, bbox_to_anchor=(1.02, 1.025))
 
         plt.tight_layout(pad=2) 
-        plt.savefig(f"/home/jubto/projects/trading_bot/coindata/INJ/historical/{symbol}_{mode}_graph.png")
+        plt.savefig(f"{self.graph_path}/trading_simulation/{symbol}/trade_simulation_{symbol}_{filename_etx}.png")
 
 
-    def graph_signal_against_pa(self, symbol, custom_timeframes = [], custom_filename = ""):
+    def graph_signal_against_pa(self, symbol, custom_timeframes = []):
         ''''''
         # map signals against real candle PA, however also map a little mark for each max gain after signal before the next signal
         # signals will be background vertical lines, max gains can just be a tiny red dotted line or something
@@ -1147,25 +1162,25 @@ class Coin():
 if __name__ == "__main__":
     coin = Coin('INJ')
     # coin.compute_historical_score('INJUSDT')
-    # # coin.generate_look_ahead_gains("INJUSDT", peak_start_only=True, custom_filename="peak_start_only")
+    # # coin.generate_look_ahead_gains("INJUSDT", peak_start_only=True)
     # coin.generate_look_ahead_gains("INJUSDT")
     # coin.generate_retain_score("INJUSDT")
-    # # coin.graph_historical_data("INJUSDT", custom_filename="peak_start_only")
+    # # coin.graph_look_ahead_data("INJUSDT")
     # # coin.generate_look_ahead_gains("INJUSDT")
-    coin.graph_historical_data("INJUSDT", graph_type="bar")
+    coin.graph_look_ahead_data("INJUSDT", graph_type="bar")
 
     # # btc
     # coin.compute_historical_score('INJBTC')
     # coin.generate_look_ahead_gains("INJBTC")
     # coin.generate_retain_score("INJBTC")
-    # coin.graph_historical_data("INJBTC")    
+    # coin.graph_look_ahead_data("INJBTC")    
     
 
-    # coin.compute_historical_score('INJUSDT', custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')
-    # coin.generate_look_ahead_gains("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')
-    # coin.generate_retain_score("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')
-    # coin.graph_historical_data("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')   
-    # coin.analyse_peaks('INJUSDT', custom_timeframes=['1h', '4h', '1d', '3d', '1w'], custom_filename='1w_no12h')     
+    # coin.compute_historical_score('INJUSDT', custom_timeframes=['1h', '4h', '1d', '3d', '1w'])
+    # coin.generate_look_ahead_gains("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'])
+    # coin.generate_retain_score("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'])
+    # coin.graph_look_ahead_data("INJUSDT", custom_timeframes=['1h', '4h', '1d', '3d', '1w'])   
+    # coin.analyse_peaks('INJUSDT', custom_timeframes=['1h', '4h', '1d', '3d', '1w'])     
 
 
     #BTC
@@ -1173,5 +1188,5 @@ if __name__ == "__main__":
     # coin.compute_historical_score('BTCUSDT')
     # coin.generate_look_ahead_gains("BTCUSDT")
     # coin.generate_retain_score("BTCUSDT")
-    # coin.graph_historical_data("BTCUSDT")  
+    # coin.graph_look_ahead_data("BTCUSDT")  
     pass

@@ -117,8 +117,8 @@ class Notification_server():
                 Thread(target=self.get_trend(), name='get_trends', daemon=True).start()
             elif user_input == 'retain':
                 Thread(target=self.get_retain_scoring(), name='get_retain', daemon=True).start()
-            elif user_input == 'graph':
-                Thread(target=self.get_graph(), name='get_graph', daemon=True).start()
+            elif user_input == 'graph1':
+                Thread(target=self.get_look_ahead_graph(), name='get_look_ahead_graph', daemon=True).start()
             elif user_input == 'signals':
                 self.get_latest_signals()
             elif user_input == 'stdout':
@@ -339,7 +339,8 @@ class Notification_server():
         interval_5min_mapping = {'5m':1, '15m':3, '30m':6, '1h':12, '2h':24, '3h':36, '4h':48, '6h':72, '8h':96, '12h':144, '1d':288, '3d':864, '1w':2016, '1M':8640}
         blocksize = (num_scores * interval_5min_mapping[interval])*46 + 230 # no of bytes to extract from csv
         self.coin_objs[coin].compute_historical_score(symbol)
-        with open(self.data_path + f'/{coin.upper()}/historical/{symbol}_historical_scoring.csv') as f:
+        # TODO remember to set the stdout to OFF
+        with open(self.data_path + f'/{coin.upper()}/historical/{symbol}_historical_scoring.csv') as f: #TODO again not happy, make into coin method
             f.seek(0, os.SEEK_END) # move to eof
             eof = f.tell()
             try:
@@ -367,7 +368,7 @@ class Notification_server():
 
     def get_retain_scoring(self):
         '''Generates a retain score file for the given coin + pair'''
-        #TODO allow import filename and custom timeframes
+        #TODO allow custom timeframes
         query = input('Enter a symbol (coin_pair) `BTC_USDT` >>> ')
         try:
             coin = query.split('_')[0].upper()
@@ -388,12 +389,13 @@ class Notification_server():
             return
         
         self.coin_objs[coin].generate_retain_score(symbol)
-        print(f'Retain score summary for {symbol} has completed. See file located at: {self.data_path}/{coin}/historical/{symbol}_retain_scoring.csv')
+        print(f'Retain score summary for {symbol} has completed. \
+            See file located at: {self.data_path}/analysis/retain_scoring/{symbol}/')
 
 
-    def get_graph(self):
+    def get_look_ahead_graph(self):
         '''Generates a retain score graph for the given coin + pair'''
-        #TODO allow import filename and custom timeframes
+        #TODO allow custom timeframes
         query = input('Enter a symbol (coin_pair) `BTC_USDT` >>> ')
         try:
             coin = query.split('_')[0].upper()
@@ -413,20 +415,30 @@ class Notification_server():
             print('Invalid query, please enter a symbol (coin_pair) E.g. `retain BTC_USDT`\n')
             return
         
-        self.coin_objs[coin].graph_historical_data(symbol)
-        print(f'Graph summary for {symbol} has completed. See file located at: {self.data_path}/{coin}/historical/{symbol}_scoring_graph.png')
+        self.coin_objs[coin].graph_look_ahead_data(symbol)
+        print(f'Graph summary for {symbol} has completed. \
+            See file located at: {self.data_path}/analysis/graphs/look_aheads/{symbol}/')
+
+    
+    def get_trading_simulation_graph(self):
+        pass
+
+    
+    def get_pa_signal_graph(self):
+        pass
 
 
     def get_latest_signals(self):
         '''Returns the date of the latest peak, how many days ago, the price it was, the score, the timeframe scores, the max gains since then, the current gains'''
 
+        #TODO I don't like how this accesses the coindata files, make into coin method
         blocksize = 25000
         monitored_symbols = set([f'{coin}_{symbol_tf.split("_")[0]}' for coin, symbol_tfs in self.monitored_coins.items() for symbol_tf in symbol_tfs])
         for coin_symbol in monitored_symbols:
             coin, symbol = coin_symbol.split('_')
             trading_pair = symbol.split(coin)[-1]
             self.coin_objs[coin].compute_historical_score(symbol)
-            with open(self.data_path + f'/{coin}/historical/{symbol}_historical_scoring.csv') as f:
+            with open(f'{self.data_path}/analysis/historical_scoring/{symbol}/.csv') as f:
                 header_chunk = f.read(500).split('\n')
                 header_len = len(header_chunk[0].split(','))
                 timeframes = [col.split('_')[1] for col in header_chunk[0].split(',')[5:-1:2]]
