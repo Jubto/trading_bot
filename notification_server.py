@@ -1,6 +1,7 @@
 from threading import Thread, Event, enumerate as list_threads
 from get_candles import Coin
-from enums import INTERVALS, DEFAULT_TIMEFRAMES, DEFAULT_THRESHOLD
+from utility import get_filename_extension
+from enums import INTERVALS, DEFAULT_TIMEFRAMES, STANDARD_TRADING_PAIRS
 from datetime import datetime
 from glob import glob
 import subprocess
@@ -156,13 +157,14 @@ class Notification_server():
         added_coins = set()
         for coin in to_monitor:
             for tradingpair in to_monitor[coin]:
+                print(f'Server setting up monitoring for {coin}{tradingpair if tradingpair else ""}...')
                 coin_obj = Coin(coin) # Create new coin object to monitor. 
                 symbol_timeframes = coin_obj.get_symbol_timeframes() # Used to determine whether coin exists in local storage or not.
                 timeframes = [interval.split('_')[-1] for interval in to_monitor[coin][tradingpair]]
 
                 if len(symbol_timeframes) == 0:  
                     # This means coin had no local storage
-                    if tradingpair != 'NA':
+                    if tradingpair != None:
                         if coin_obj.get_candles(tradingpair=tradingpair, intervals=timeframes):
                             pass # Binance succesfully returned candles for coin-tradingpair/timeframe.
                         else:
@@ -173,14 +175,14 @@ class Notification_server():
                     else:
                         print(f"{coin} is not avaliable on Binance.")
                         continue # This means coin provided is invalid for Binance.
-                elif tradingpair != 'NA':
+                elif tradingpair != None:
                     # Server has local storage of coin.
                     if coin_obj.get_candles(tradingpair=tradingpair, intervals=timeframes):
                         pass # This either added a new tradingpair or updated the existing stored one.
                     else:
                         print(f"{coin}{tradingpair} is not avaliable on Binance.")
                         continue # This means newly entered tradingpair is invalid for Binance. 
-                print(f"Server will start monitoring {coin}{tradingpair}.\n") if tradingpair != 'NA' else print(f"Server will start monitoring {coin}.\n")
+                print(f"Server will start monitoring {coin}{tradingpair}.\n") if tradingpair != None else print(f"Server will start monitoring {coin}.\n")
                 added_coins.add(coin)
 
                 # Add coin to server monitoring list
@@ -190,7 +192,7 @@ class Notification_server():
                 symbol_timeframes = coin_obj.get_symbol_timeframes() # New coin csv files may have been added. 
                 for symbol_timeframe in symbol_timeframes:
                     symbol = symbol_timeframe.split('_')[0].upper()
-                    if tradingpair == 'NA' or symbol == coin_obj.coin + tradingpair:
+                    if tradingpair == None or symbol == coin_obj.coin + tradingpair:
                         if symbol_timeframe not in self.monitored_coins[coin]:
                             self.monitored_coins[coin].append(symbol_timeframe) # Append only tradingpair/timeframe which server will actively monitoring.
                 self.monitored_coins[coin].sort()
@@ -298,72 +300,69 @@ class Notification_server():
         '''Hanndles server coin monitoring initiation and 'all' command'''
 
         if not coins:
-            paths = glob(self.data_path + '/*') 
-            if len(paths) == 0:
+            coins = self.get_stored_coins()
+            if len(coins) == 0:
                 self.input_monitor_new() # If no coins are found in coindata directory, prompt user to enter coin.
-            coins = [path.split('/')[-1] for path in paths] # Clean path to get only the directory name (i.e. coin).
 
         coins_to_add = set()
-        coins_to_add = coins_to_add.union(self.add_to_monitoring(to_monitor= {coin.upper():{"NA":[]} for coin in coins})) # Validate each coin entered, add to monitoring
+        coins_to_add = coins_to_add.union(self.add_to_monitoring(to_monitor= {coin.upper():{None:[]} for coin in coins})) # Validate each coin entered, add to monitoring
         self.add_new_coins(coins_to_add) # Start thread for each coin if one doesn't already exist.
 
 
-    def get_trend(self):
-        '''Returns the last x many score entries for a given interval for a given coin'''
-        # TODO make a get_trends_graph, uses candle stick graph of PA, with score as line graph behind it
+    def get_stored_coins(self):
+        '''returns list of coins stored in database'''
+        
+        paths = glob(f'{self.data_path}/*')
+        return [path.split('/')[-1] for path in paths if 'binance_scan' not in path]
 
-        query = input('Enter a symbol (coin_pair), number of past scores, and the interval you wish to see, E.g. `BTC_USDT 50 1h` >>> ').split()
+
+    def get_stored_symbols(self):
+        '''returns a dictionary containing all the coins and their symbols stored in the database'''
+
+        stored_coins = self.get_stored_coins()
+        stored_symbols = []
+        for coin in stored_coins:
+            stored_symbols.append(set([path.split('/')[-1].split('_')[0] for path in glob(f'{self.data_path}/{coin}/*') if '.csv' in path]))
+        return [symbol for symbols in stored_symbols for symbol in symbols]
+
+    
+    def find_coin_from_symbol(self, symbol):
+        '''Returns coin from given symbol string'''
+        coin = [symbol.split(tradingpair)[0] for tradingpair in STANDARD_TRADING_PAIRS if tradingpair in symbol]
+        return None if len(coin) == 0 else coin[0]
+
+
+    def get_trend(self, advanced=False):
+        '''Returns the last x many score entries for a given interval for a given coin'''
+
+        query = input('Enter a symbol (coin_pair), number of past scores, and the interval you wish to see, e.g. `BTCUSDT 50 1h` >>> ').split()
         try:
-            symbol, num_scores, interval = query
-            coin = symbol.split('_')[0].upper()
-            num_scores = int(num_scores)
-            paths = glob(self.data_path + '/*')
-            coins = [path.split('/')[-1] for path in paths]
             if len(query) != 3:
                 print('Invalid number of arguments\n')
                 return
-            if coin not in coins:
+            symbol, num_scores, interval = query
+            symbol = symbol.upper()
+            coin = self.find_coin_from_symbol(symbol)
+            num_scores = int(num_scores)
+            if coin not in self.get_stored_coins():
                 print(f'{coin} is not currently being monitored by this server. Please add it using `monitor` command first.\n')
                 return
-            if interval not in INTERVALS or '_' not in symbol:
-                raise ValueError
-            symbol = symbol.replace('_', '').upper()
-            if symbol not in ''.join(self.monitored_coins[coin]):
+            if symbol not in self.get_stored_symbols():
                 print(f'{symbol} is not currently being monitored by this server. Please add it using `monitor` command first.\n')
                 return
+            if interval not in INTERVALS:
+                raise ValueError
         except ValueError:
             print('Invalid query, please enter a symbol (coin_pair), number of past scores, and an interval E.g.`trend BTC 50 1h`\n')
             return
         
-        print(f'Gathering latest historical score data for {coin}...')
-        interval_5min_mapping = {'5m':1, '15m':3, '30m':6, '1h':12, '2h':24, '3h':36, '4h':48, '6h':72, '8h':96, '12h':144, '1d':288, '3d':864, '1w':2016, '1M':8640}
-        blocksize = (num_scores * interval_5min_mapping[interval])*46 + 230 # no of bytes to extract from csv
-        self.coin_objs[coin].compute_historical_score(symbol)
-        # TODO remember to set the stdout to OFF
-        with open(self.data_path + f'/{coin.upper()}/historical/{symbol}_historical_scoring.csv') as f: #TODO again not happy, make into coin method
-            f.seek(0, os.SEEK_END) # move to eof
-            eof = f.tell()
-            try:
-                f.seek(eof - blocksize)
-            except ValueError:
-                print('Error: Not enough historical data.')
-                return
-            data = f.read(blocksize) # load the end of the csv
-            print(f'The last {num_scores} many {interval} scores for {coin} are >>>')
-            to_skip = -1
-            rows_printed = 0
-            rows_count = 0
-            for row in csv.reader(data.split('\n')[1:]):
-                rows_count += 1
-                if to_skip > 1 or not row:
-                    to_skip -= 1
-                    continue
-                to_skip = interval_5min_mapping[interval]
-                rows_printed += 1
-                print(f'Price: {row[1]:6}  | Bull: {row[2]} 1h_Bull: {row[6]}  | Bear: {row[3]} 1h_Bear: {row[5]}   | signal: {row[-1]}')
-                if rows_printed == num_scores:
-                    break
-            print('\n')
+        timeframes = []
+        threshold = None
+        if advanced:
+            timeframes = input('Specify custom timeframes (e.g. 1h 4h 12h 1d 3d 1w) or skip to use default timeframes.').split()
+            threshold = input('Specify custom threshold (e.g. bull:15|bear:10) or skip to use optimal threshold.').upper().split()
+        print(self.coin_objs[coin].get_trend_stdout(symbol, num_scores, interval, timeframes, threshold))
+        print('\n')
 
 
     def get_retain_scoring(self):
@@ -434,11 +433,12 @@ class Notification_server():
         #TODO I don't like how this accesses the coindata files, make into coin method
         blocksize = 25000
         monitored_symbols = set([f'{coin}_{symbol_tf.split("_")[0]}' for coin, symbol_tfs in self.monitored_coins.items() for symbol_tf in symbol_tfs])
+        filename_ext = get_filename_extension()
         for coin_symbol in monitored_symbols:
             coin, symbol = coin_symbol.split('_')
             trading_pair = symbol.split(coin)[-1]
             self.coin_objs[coin].compute_historical_score(symbol)
-            with open(f'{self.data_path}/analysis/historical_scoring/{symbol}/.csv') as f:
+            with open(f'{self.data_path}/{coin}/analysis/historical_scorings/{symbol}/historical_scoring_{symbol}_{filename_ext}.csv') as f:
                 header_chunk = f.read(500).split('\n')
                 header_len = len(header_chunk[0].split(','))
                 timeframes = [col.split('_')[1] for col in header_chunk[0].split(',')[5:-1:2]]
