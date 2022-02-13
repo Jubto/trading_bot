@@ -52,7 +52,16 @@ class Notification_server():
 
         self.monitored_coins = {} # Dict of coins server is currently monitoring - example  {coin:[symbol_timeframe, symbol_timeframe, ...]}
         self.coin_objs = {} # E.g. {'btc': btc_obj, 'rvn': rvn_obj}
-        self.server_instruction = {'drop': '', "stdout": 0, 'stdout_detail': 0, 'request_interval': [], 'pause': 0, 'boost': 0, 'score': 0, 'new_user': ''}
+        self.server_instruction = {
+            'drop': '',
+            "stdout": 0,
+            'stdout_detail': 0,
+            'request_interval': [],
+            'pause': 0,
+            'boost': 0,
+            'score': 0,
+            'new_user': ''
+        }
         self.message_backlog = [] # List of messages for server_stdout() to process in order. 
         self.server_users = {} # Dict keeping track of server users and their attributes (coins, update_intervals, thresholds, previlages). 
         self.mode_1_messages = {} # Dict to store mode 1 (signal) like messages for server_user thread to read/send.
@@ -107,7 +116,7 @@ class Notification_server():
         '''Thread handles user inputs'''
 
         while True:
-            user_input = input() # Pauses thread until user input.
+            user_input = input().strip().lower() # Pauses thread until user input.
             if user_input == 'commands':
                 self.server_commands()
             elif user_input == 'quit':
@@ -250,14 +259,15 @@ class Notification_server():
 
                 if bull_score > previous_bull_score or bear_score > previous_bear_score:
                     if coin_score[0][1] >= self.BULL_THRESHOLD:
-                        coin_obj.generate_result_files(mode='signal') # Generate/replace signal graph/csv files in server_mail/outgoing for users to send
+                        # coin_obj.generate_result_files(mode='signal') # Generate/replace signal graph/csv files in server_mail/outgoing for users to send
+                        pass
                         self.mode_1_messages[coin] = f"BULL_{self.BULL_THRESHOLD}" # Send message to all users subscribed to this coin
                     elif coin_score[0][2] >= self.BEAR_THRESHOLD:
-                        coin_obj.generate_result_files(mode='signal')
+                        # coin_obj.generate_result_files(mode='signal')
                         self.mode_1_messages[coin] = f"BEAR_{self.BEAR_THRESHOLD}" 
 
                 if self.MODE_2_REQUEST:
-                    coin_obj.generate_result_files(mode='update')
+                    # coin_obj.generate_result_files(mode='update')
                     self.MODE_2_REQUEST -= 1 # Once the value becomes zero, any user thread which is ready will send a mode 2 email.
 
 
@@ -437,63 +447,67 @@ class Notification_server():
         for coin_symbol in monitored_symbols:
             coin, symbol = coin_symbol.split('_')
             trading_pair = symbol.split(coin)[-1]
-            self.coin_objs[coin].compute_historical_score(symbol)
-            with open(f'{self.data_path}/{coin}/analysis/historical_scorings/{symbol}/historical_scoring_{symbol}_{filename_ext}.csv') as f:
-                header_chunk = f.read(500).split('\n')
-                header_len = len(header_chunk[0].split(','))
-                timeframes = [col.split('_')[1] for col in header_chunk[0].split(',')[5:-1:2]]
-                threshold = int(((len(header_chunk[0].split(',')) - 6)*3)*0.5)
-                max_score = int((len(header_chunk[0].split(',')) - 6)*3)
-                f.seek(0, os.SEEK_END) # move to eof
-                eof = f.tell()
-                next_block = eof - blocksize
-                peak_buffer, peak, peak_price = 0, 0, 0
-                best_price = [float('inf'), 0] # min, max
-                best_price_snapshot = []
-                peak_row = []
-                while next_block > 0:
-                    f.seek(next_block)
-                    data = f.read(blocksize).split('\n') # load the end of the csv
-                    data.reverse()
-                    if next_block == eof - blocksize:
-                        latest_row = data[1].split(',')
-                    next_block -= blocksize
-                    for row in csv.reader(data):
-                        if len(row) != header_len:
-                            continue
-                        peak_buffer -= 1
-                        score = max(int(row[2]), int(row[3]))
-                        best_price[0] = min(best_price[0], float(row[1]))
-                        best_price[1] = max(best_price[1], float(row[1]))
-                        if score >= threshold and score > peak:
-                            peak = score
-                            peak_price = float(row[1])
-                            best_price_snapshot = best_price.copy()
-                            peak_row = row
-                            peak_buffer = 12
-                            continue
-                        elif peak and not peak_buffer:
-                            signal = 'SELL' if int(peak_row[2]) > int(peak_row[3]) else 'BUY'
-                            alt_action = 'BUY' if signal == 'SELL' else 'SELL'
-                            desired_assest = coin if signal == 'SELL' else trading_pair
-                            # max_gain = 100 - (best_price_snapshot[0] / peak_price)*100 if signal == 'SELL' else (best_price_snapshot[1] / peak_price)*100 - 100
-                            # best_gain_price = best_price_snapshot[0] if signal == 'SELL' else best_price_snapshot[1]
-                            # current_gain = 100 - (float(latest_row[1]) / peak_price)*100 if signal == 'SELL' else (float(latest_row[1]) / peak_price)*100 - 100
-                            # The gain you get from responding to the latest signal (i.e. if signal was SELL, then the gain you make from BUYing now)
-                            max_gain = (peak_price / best_price_snapshot[0])*100 - 100 if signal == 'SELL' else (best_price_snapshot[1] / peak_price)*100 - 100
-                            best_gain_price = best_price_snapshot[0] if signal == 'SELL' else best_price_snapshot[1]
-                            current_gain = (peak_price / float(latest_row[1]))*100 - 100 if signal == 'SELL' else (float(latest_row[1]) / peak_price)*100 - 100                            
-                            tf_indexs = list(range(5, len(peak_row) - 1 ,2)) if signal == 'BUY' else list(range(6, len(peak_row) - 1 ,2))
-                            tf_scores = [f'{timeframes[i]}: {score}' for i, score in enumerate([peak_row[i] for i in tf_indexs])]
-                            uts = int(peak_row[0][:-3])
-                            delta = int((datetime.now() - datetime.fromtimestamp(uts)).total_seconds() // 3600)
-                            date = datetime.fromtimestamp(uts).strftime('%d/%m/%y %a %I:%M %p')
-                            print(f'\n===================================== Signals for {symbol} =====================================')
-                            print(f'{signal} signal {delta} hours ago at {date}')
-                            print(f'Price was: {peak_row[1]}, score: {peak}/{max_score}, change score: {peak_row[4]}/{max_score}, timeframe scores: {", ".join(tf_scores)}')
-                            print(f'Max gain from {alt_action} would be {max_gain:.2f}% of {desired_assest} at ${best_gain_price}, gain now from {alt_action} is {current_gain:.2f}% of {desired_assest} at ${latest_row[1]}\n')
-                            next_block = -1000
-                            break
+            self.coin_objs[coin].get_latest_signal_stats(symbol)
+            # self.coin_objs[coin].compute_historical_score(symbol)
+            # with open(f'{self.data_path}/{coin}/analysis/historical_scorings/{symbol}/historical_scoring_{symbol}_{filename_ext}.csv') as f:
+            #     header_chunk = f.read(500).split('\n')
+            #     header_len = len(header_chunk[0].split(','))
+            #     timeframes = [col.split('_')[1] for col in header_chunk[0].split(',')[5:-1:2]]
+            #     threshold = int(((len(header_chunk[0].split(',')) - 6)*3)*0.5)
+            #     max_score = int((len(header_chunk[0].split(',')) - 6)*3)
+            #     f.seek(0, os.SEEK_END) # move to eof
+            #     eof = f.tell()
+            #     next_block = eof - blocksize
+            #     peak_buffer, peak, peak_price = 0, 0, 0
+            #     best_price = [float('inf'), 0] # min, max
+            #     best_price_snapshot = []
+            #     peak_row = []
+            #     while next_block > 0:
+            #         f.seek(next_block)
+            #         data = f.read(blocksize).split('\n') # load the end of the csv
+            #         data.reverse()
+            #         if next_block == eof - blocksize:
+            #             latest_row = data[1].split(',')
+            #             print(f'latest row= :{latest_row}')
+            #         next_block -= blocksize
+            #         for count, row in enumerate(csv.reader(data)):
+            #             if count < 10:
+            #                 print(row)
+            #             if len(row) != header_len:
+            #                 continue
+            #             peak_buffer -= 1
+            #             score = max(int(row[2]), int(row[3]))
+            #             best_price[0] = min(best_price[0], float(row[1]))
+            #             best_price[1] = max(best_price[1], float(row[1]))
+            #             if score >= threshold and score > peak:
+            #                 peak = score
+            #                 peak_price = float(row[1])
+            #                 best_price_snapshot = best_price.copy()
+            #                 peak_row = row
+            #                 peak_buffer = 12
+            #                 continue
+            #             elif peak and not peak_buffer:
+            #                 signal = 'SELL' if int(peak_row[2]) > int(peak_row[3]) else 'BUY'
+            #                 alt_action = 'BUY' if signal == 'SELL' else 'SELL'
+            #                 desired_assest = coin if signal == 'SELL' else trading_pair
+            #                 # max_gain = 100 - (best_price_snapshot[0] / peak_price)*100 if signal == 'SELL' else (best_price_snapshot[1] / peak_price)*100 - 100
+            #                 # best_gain_price = best_price_snapshot[0] if signal == 'SELL' else best_price_snapshot[1]
+            #                 # current_gain = 100 - (float(latest_row[1]) / peak_price)*100 if signal == 'SELL' else (float(latest_row[1]) / peak_price)*100 - 100
+            #                 # The gain you get from responding to the latest signal (i.e. if signal was SELL, then the gain you make from BUYing now)
+            #                 max_gain = (peak_price / best_price_snapshot[0])*100 - 100 if signal == 'SELL' else (best_price_snapshot[1] / peak_price)*100 - 100
+            #                 best_gain_price = best_price_snapshot[0] if signal == 'SELL' else best_price_snapshot[1]
+            #                 current_gain = (peak_price / float(latest_row[1]))*100 - 100 if signal == 'SELL' else (float(latest_row[1]) / peak_price)*100 - 100                            
+            #                 tf_indexs = list(range(5, len(peak_row) - 1 ,2)) if signal == 'BUY' else list(range(6, len(peak_row) - 1 ,2))
+            #                 tf_scores = [f'{timeframes[i]}: {score}' for i, score in enumerate([peak_row[i] for i in tf_indexs])]
+            #                 uts = int(peak_row[0][:-3])
+            #                 delta = int((datetime.now() - datetime.fromtimestamp(uts)).total_seconds() // 3600)
+            #                 date = datetime.fromtimestamp(uts).strftime('%d/%m/%y %a %I:%M %p')
+            #                 print(f'\n===================================== Signals for {symbol} =====================================')
+            #                 print(f'{signal} signal {delta} hours ago at {date}')
+            #                 print(f'Price was: {peak_row[1]}, score: {peak}/{max_score}, change score: {peak_row[4]}/{max_score}, timeframe scores: {", ".join(tf_scores)}')
+            #                 print(f'Max gain from {alt_action} would be {max_gain:.2f}% of {desired_assest} at ${best_gain_price}, gain now from {alt_action} is {current_gain:.2f}% of {desired_assest} at ${latest_row[1]}\n')
+            #                 next_block = -1000
+            #                 break
 
 
     def request_interval_handler(self):
