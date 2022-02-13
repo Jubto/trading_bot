@@ -29,7 +29,9 @@ __Symbol_timeframe  = INJUSDT_5m
 '''
 
 class Coin():
-    '''A class which retrieves candle stick data for a given coin avaliable on Binance, performs TA on the stored data, can return a score.'''
+    '''
+    A class which retrieves candle stick data for a given coin avaliable on Binance, performs TA on the stored data, can return a score.
+    '''
 
     def __init__(self, coin = str):	
 
@@ -96,54 +98,52 @@ class Coin():
 
 
     def candlestick_data_file_marker(self, file_path, mode, klines): # TODO make private
-        '''Creates new or appends to existing csv files for coin objects. Inserts header in the first row
-           Header row contains: Final row UTS timestamp, number of rows, pointer position at EOF.'''
+        '''
+        Creates or updates data storage for all historical candlestick data for coin.
+        '''
 
         with open(file_path, mode, newline='') as f:
-            print(f'csv maker: mode: {mode} klines len: {len(klines)}')
-            print(klines)
             csv_writer = csv.writer(f, delimiter=',')
-            if len(klines) == 1:
-                self.modify_candlestick_data_file(csv_writer, f, klines[0])
+            columns = [
+                    'open_uts',
+                    'open',
+                    'high',
+                    'low',
+                    'close',
+                    'volumne',
+                    'close_time',
+                    'asset_vol',
+                    'num_trades',
+                    'base_buyer_vol',
+                    'quote_buyer_vol',
+                    f'{0:030}'
+                ]
+            if mode == 'w':
+                num_closed_rows = len(klines[:-1]) # don't count latest kline since that hasn't yet closed
+                columns[-1] = f'{num_closed_rows:030}'
+                csv_writer.writerow(columns)
+                [csv_writer.writerow(kline) for kline in klines]
             else:
-                columns = [
-                        'open_uts',
-                        'open',
-                        'high',
-                        'low',
-                        'close',
-                        'volumne',
-                        'close_time',
-                        'asset_vol',
-                        'num_trades',
-                        'base_buyer_vol',
-                        'quote_buyer_vol',
-                        f'{0:030}'
-                    ]
-                if mode == 'w':
-                    num_closed_rows = len(klines[:-1]) # don't count latest kline since that hasn't yet closed
-                    columns[-1] = f'{num_closed_rows:030}'
-                    csv_writer.writerow(columns)
-                    [csv_writer.writerow(kline) for kline in klines]
-                else:
-                    num_closed_rows = int(f.readline().split(',')[-1].lstrip('0')) + len(klines[:-1])
-                    columns[-1] = f'{num_closed_rows:030}'
-                    f.seek(0)
-                    csv_writer.writerow(columns)
-                    f.seek(0, os.SEEK_END)
-                    self.modify_candlestick_data_file(csv_writer, f, klines[0])
-                    [csv_writer.writerow(kline) for kline in klines[1:]]
+                num_closed_rows = int(f.readline().split(',')[-1].lstrip('0')) + len(klines[:-1])
+                columns[-1] = f'{num_closed_rows:030}'
+                f.seek(0)
+                csv_writer.writerow(columns)
+                f.seek(0, os.SEEK_END)
+                self.modify_candlestick_data_file(csv_writer, f, klines[0])
+                [csv_writer.writerow(kline) for kline in klines[1:]]
 
 
     def modify_candlestick_data_file(self, csv_writer, file_obj, kline):
-        '''Modifies the final row in-place for given candlestick csv file.'''
+        '''
+        Modifies the final row of given candlestick csv file in-place
+        '''
 
         latest_kline_string = ','.join([str(col) if type(col) == int else col for col in kline])
         latest_kline_string_byte_size = len(latest_kline_string.encode('utf-8'))
         file_obj.seek(0, os.SEEK_END)
         eof = file_obj.tell()
-        file_obj.seek(eof - 500) # get final rows
-        final_stored_row = file_obj.readlines()[-1]
+        file_obj.seek(eof - 500) # jump close to eof
+        final_stored_row = file_obj.readlines()[-1] # grab the final row
         final_stored_row_byte_size = len(final_stored_row.encode('utf-8'))
         alignment = 0 if '\r' in final_stored_row else 1 # windows may have \r in row string
         file_obj.seek(eof - final_stored_row_byte_size - alignment) # seek to precisely start of last row
@@ -162,13 +162,17 @@ class Coin():
 
 
     def get_candlestick_path(self, symbol, timeframe): # TODO make private
-        '''Returns absolute path of coin objects specified csv file'''
+        '''
+        Returns absolute path of candlestick csv file for given symbol and timeframe
+        '''
 
         return f"{self.coin_path}/{symbol}_{timeframe}.csv"
                 
 
     def get_latest_stored_uts(self, candle_csv_path):
-        '''returns the latest uts for given candlestick csv file'''
+        '''
+        returns the latest uts for given candlestick csv file
+        '''
 
         with open(candle_csv_path, 'r') as f:
             f.seek(0, os.SEEK_END)
@@ -178,7 +182,9 @@ class Coin():
 
 
     def remove_timeframe(self, symbol_timeframe):
-        '''Handles removal of timeframe for given coin'''
+        '''
+        Handles removal of specific candlestick csv file from database
+        '''
 
         datafile = f"{self.coin_path}/{symbol_timeframe}.csv"
         if os.path.exists(datafile):
@@ -191,7 +197,9 @@ class Coin():
 
 
     def remove_symbol(self, symbol):
-        '''Handles removal of trading pair from given coin'''
+        '''
+        Handles removal of all candlestick csv file of a given symbol from database
+        '''
 
         symbol_timeframes = self.get_symbol_timeframes()
         for symbol_timeframe in symbol_timeframes:
@@ -203,7 +211,9 @@ class Coin():
 
 
     def remove_coin(self):
-        '''Handles removing coin'''
+        '''
+        Handles removal of all candlestick csv file of a given coin from database
+        '''
 
         files = glob(self.coin_path + '/*')
         for path in files:
@@ -213,14 +223,18 @@ class Coin():
 
 
     def get_symbol_timeframes(self):
-        '''Returns a list of all csv files of coin object, e.g. returns [INJBTC_4h, INJUSDT_4h]'''
+        '''
+        Returns a list of all symbol timeframes stored for given coin, format: [INJBTC_4h, INJUSDT_4h, ...]
+        '''
 
         files = glob(self.coin_path + '/' + self.coin + '*')
         return [f.split('/')[-1].split('.')[0] for f in files if f.split('_')[-1][:2] != "5m"] # exclude 5m timeframe  
 
 
     def create_tradingpair_folders(self, symbol):
-        '''creates all symbol folders for given coin'''
+        '''
+        Creates all symbol folders for given coin
+        '''
 
         os.mkdir(f'{self.historical_scoring_path}/{symbol}')
         os.mkdir(f'{self.look_ahead_path}/{symbol}')
@@ -232,12 +246,13 @@ class Coin():
 
 
     def create_scoring_json(self, *symbol_timeframes): # TODO make private
-        '''This method will return a json string containing trading pair object (key) their timeframes (keys), and % changes (key + list)'''
+        '''
+        This method will return a json string structure which stores all candlestick percentage related data for the coin
+        '''
         
         json_data = {}
         if not symbol_timeframes:
             symbol_timeframes = self.get_symbol_timeframes()
-
         for symbol_timeframe in symbol_timeframes:
             symbol = symbol_timeframe.split('_')[0]
             timeframe_metric_dict = {symbol_timeframe.split('_')[1]:{
@@ -250,12 +265,13 @@ class Coin():
                 json_data[symbol].update(timeframe_metric_dict)
             except KeyError:
                 json_data[symbol] = timeframe_metric_dict
-        
         return json_data
 
 
     def create_score_json_file(self): # TODO make private
-        '''Creates and returns a json object string'''
+        '''
+        Creates json file which stores all candlestick percentage related data for the coin
+        '''
 
         if os.path.exists(self.json_file):
             return None
@@ -264,8 +280,10 @@ class Coin():
             json.dump(coin_score_data, jf, indent=4)
 
 
-    def update_score_json(self): # TODO make private
-        '''Ensures stored csvfiles are synchronous with json by either adding or deleting csvfiles to/from json.'''
+    def synchronize_score_json(self): # TODO make private
+        '''
+        Ensures stored csvfiles are synchronous with json by either adding or deleting csvfiles to/from json.
+        '''
         
         with open(self.json_file, 'r') as jf:
             coin_score_data = json.load(jf)
@@ -307,7 +325,9 @@ class Coin():
 
 
     def add_data_to_score_json(self): # TODO make private
-        '''Retreves candle data starting from last updated date and then updates the json'''
+        '''
+        Retreves candle data starting from last updated date and then updates the json
+        '''
 
         with open(self.json_file, 'r') as jf:
             coin_score_data = json.load(jf)
@@ -338,10 +358,12 @@ class Coin():
 
 
     def update_stored_data(self, need_update=False): # TODO make private
-        '''Updates all csv and json files of given file object.'''
+        '''
+        Updates all csv and json files of given file object.
+        '''
  
         # Perform this low cost update, ensures json file is synchronous with stored csvfiles. 
-        if self.update_score_json():
+        if self.synchronize_score_json():
             need_update = True
 
         # More expensive update, only perform at most every hour. This updates candle/json data.
@@ -364,13 +386,14 @@ class Coin():
 
 
     def current_score(self, to_monitor=[], custom_threshold=None):
-        '''Returns current calculated score.
-           Bull/Bear score indicates how well the current price action performs compared to all histortical candle max/min spikes
-           change_score indicates how likely the current price will change_score based on all historical candle closes
-           Amplitude score indicates how volitile the current price action is compared to all historical candle closes
-           Optional parameter `to_monitor` which takes a list of symbol_timeframes to specifically calculate score for.'''
+        '''
+        Returns current calculated score.
+        Bull/Bear score indicates how well the current price action performs compared to all histortical candle max/min spikes
+        change_score indicates how likely the current price will change_score based on all historical candle closes
+        Amplitude score indicates how volitile the current price action is compared to all historical candle closes
+        Optional parameter `to_monitor` which takes a list of symbol_timeframes to specifically calculate score for.
+        '''
 
-        print(f'current_score running, to monitor: {to_monitor}')
         self.update_stored_data() # Get latest candles
 
         # need to get a dict of the form: {symbol: [timeframes]} -> then for each symbol, feed that into self.optimise_signal_threshold
@@ -455,11 +478,13 @@ class Coin():
 
     
     def compute_historical_score(self, symbol, custom_timeframes = []):
-        '''Calculates bull/bear/change_scorement score for all 5 minute intervals of the coins history.
+        '''
+        Calculates bull/bear/change_scorement score for all 5 minute intervals of the coins history.
         Each 5 minutes simulates running the current score method back in time, with information known only back during the 5minute interval
         Bull/Bear score indicates how well the current price action performs compared to all histortical candle data
         Retain_score indicates how likely the current price will change_score based on historical data
-        If prior historical analysis is present, only the latest data will be computed and appended.'''
+        If prior historical analysis is present, only the latest data will be computed and appended.
+        '''
 
         print(f'computing historical score for {symbol}...')
         self.update_stored_data() # Get latest candles from Binance
@@ -607,7 +632,8 @@ class Coin():
 
 
     def generate_look_ahead_gains(self, symbol, custom_timeframes = [], peak_start_only = False, threshold=0.5):
-        '''Searches through specificed historical_scoring csv to find bull/bear score peaks over a certain thresold.
+        '''
+        Searches through specificed historical_scoring csv to find bull/bear score peaks over a certain thresold.
         Once found, it calculates the % difference of if you sold/bought after 30min, 1h, 4h, 1d, 3d, 1w, 2w.
         Saves the data in 'look_ahead_gains.csv'
         '''
@@ -687,7 +713,8 @@ class Coin():
 
 
     def generate_retain_score(self, symbol, custom_timeframes = []):
-        '''Creates a score file summarising the data in look_ahead_gains.csv for given symbol
+        '''
+        Creates a score file summarising the data in look_ahead_gains.csv for given symbol
         '''
 
         print('computing retain score...')
@@ -908,8 +935,10 @@ class Coin():
 
 
     def optimise_signal_threshold(self, symbol, custom_timeframes=[], delay_trading=0, metric='overall'):
-        '''By default this will return the rank 1 best overall threshold setting used for the given symbol/parameters
-        If the metric function parameter is set to 'max' then the rank 1 best max threshold will be returned'''
+        '''
+        By default this will return the rank 1 best overall threshold setting used for the given symbol/parameters
+        If the metric function parameter is set to 'max' then the rank 1 best max threshold will be returned
+        '''
 
         filename_ext = get_filename_extension(custom_timeframes)
         filename_ext += f'_delay-{delay_trading}weeks' if delay_trading else ''
@@ -926,8 +955,10 @@ class Coin():
 
 
     def graph_look_ahead_data(self, symbol, graph_type="bar", custom_timeframes=[]):
-        '''Generates either a bar graph or line graph summarising the potential gains from buying/selling at the given score peaks.
-            using from looking ahead data'''
+        '''
+        Generates either a bar graph or line graph summarising the potential gains from buying/selling at the given score peaks.
+        using from looking ahead data
+        '''
 
         print('computing graph...')
         filename_ext = get_filename_extension(custom_timeframes)
@@ -993,10 +1024,12 @@ class Coin():
 
     
     def graph_trading_simulation(self, symbol, custom_timeframes = [], delay_trading=0, top_x=20):
-        '''Graphs out the percentage gain compared to inital holding from blindly trading the signals generated by thresholds
+        '''
+        Graphs out the percentage gain compared to inital holding from blindly trading the signals generated by thresholds
         Specifically, this graphs the gains of the coin of interest, as well as its tradingpair. The first graph is the best overall
         performing thresholds, the second graph is this same graph however showing the tradingpair gains, and the final graph is
-        the thresholds which resulted in the highest historical gains.'''
+        the thresholds which resulted in the highest historical gains.
+        '''
 
         filename_ext = get_filename_extension(custom_timeframes)
         filename_ext += f'_delay-{delay_trading}weeks' if delay_trading else ''
@@ -1169,7 +1202,9 @@ class Coin():
 
 
     def get_trend_stdout(self, symbol, num_scores, interval, custom_timeframes=[], custom_threshold=None):
-        '''returns a list of entries from the historical scoring data, and will show signals if they crossed given threshold'''
+        '''
+        returns a list of entries from the historical scoring data, and will show signals if they crossed given threshold
+        '''
 
         filename_ext = get_filename_extension(custom_timeframes)
         threshold_strat = ''
@@ -1279,11 +1314,13 @@ class Coin():
     
     @staticmethod
     def score_performance(max_list, change_list, size, absolute_change, current_percent_change):
-        '''Scoring method. Determines what rank the current price action holds against historical data
+        '''
+        Scoring method. Determines what rank the current price action holds against historical data
         If the performance is greater than the top 75% of price action history, then it can obtain some score.
         Once the price action is strong enough to generate a score, it then can also generate a change_score.
         To even have a change_score of 1, the price action has to be within the top 90% of %change in history.
-        Hence, any change score is impressive, and indication that price is very unlikely to maintain this current candle.'''
+        Hence, any change score is impressive, and indication that price is very unlikely to maintain this current candle.
+        '''
 
         score, change_score = 0, 0
         #TODO use bisect https://stackoverflow.com/questions/11290767/how-to-find-an-index-at-which-a-new-item-can-be-inserted-into-sorted-list-and-ke
@@ -1331,7 +1368,9 @@ class Coin():
 
     @staticmethod
     def score_amplitude(amp_list, size, amplitude_change):
-        '''Returns current amplitude score'''
+        '''
+        Returns current amplitude score
+        '''
 
         if amplitude_change >= amp_list[int(size * 0.75)]: 
             if amplitude_change <= amp_list[int(size * 0.8)]:
@@ -1353,7 +1392,9 @@ class Coin():
 
     @staticmethod
     def percent_changes(candle_open, candle_high, candle_low, candle_close):
-        '''Returns % change, % amplitude, max % up, max % down of a given candle'''
+        '''
+        Returns % change, % amplitude, max % up, max % down of a given candle
+        '''
 
         return {'candle_change':round((candle_close / candle_open)*100 - 100, 1),
                 'candle_amplitude':round((candle_high / candle_low)*100 - 100, 1),
@@ -1374,7 +1415,9 @@ class Coin():
 
 
     def sell_assest(self):
-        '''Use only during emergency, sells asset on binance'''
+        '''
+        Use only during emergency, sells asset on binance
+        '''
 
         # I am make a seperate file and class called trading bot, where each coin object has their own trading bot object
         # This method will be involved in the literally selling/buying swing trading
