@@ -7,7 +7,6 @@ from glob import glob
 import subprocess
 import time
 import json
-import csv
 import sys
 import re
 import os
@@ -47,9 +46,6 @@ class Notification_server():
         self.data_path = self.root_path + '/coindata'
         self.script_path = self.root_path + '/notification_scripts'
         self.attribute_path = self.script_path + '/server_attributes'
-        if not os.path.exists(self.data_path):
-            os.mkdir(self.data_path) # This acts like a database to store all users coins and anaylsis.
-
         self.monitored_coins = {} # Dict of coins server is currently monitoring - example  {coin:[symbol_timeframe, symbol_timeframe, ...]}
         self.coin_objs = {} # E.g. {'btc': btc_obj, 'rvn': rvn_obj}
         self.server_instruction = {
@@ -70,6 +66,8 @@ class Notification_server():
         self.postfix_init = False
         self.server_owner_gmail = ''
 
+        if not os.path.exists(self.data_path):
+            os.mkdir(self.data_path) # This acts like a database to store all users coins and anaylsis.
         self.server_welcome()
         if coins:
             self.monitor_all_coins(coins=coins) # Monitor all coins given as arguments if valid.
@@ -110,6 +108,7 @@ class Notification_server():
         print(f"<notify>: Starts up the server notification mailing service. If first time, this will start the initialisation process.")
         print(f"<quit>: Shuts down server activity.")
         print('='*130 + '\n')
+        print(self.monitored_coins)
 
 
     def server_user_stdinput(self):
@@ -161,36 +160,27 @@ class Notification_server():
 
     def add_to_monitoring(self, to_monitor={}):
         '''Handles validating and adding items into the server monitoring dictionary monitored_coins'''
-        
+        print(f'to_monitor: {to_monitor}')
         # This section handles determining whether coin is valid with Binance, if so it will add to server monitoring.
         added_coins = set()
         for coin in to_monitor:
+            coin_obj = Coin(coin)
             for tradingpair in to_monitor[coin]:
                 print(f'Server setting up monitoring for {coin}{tradingpair if tradingpair else ""}...')
-                coin_obj = Coin(coin) # Create new coin object to monitor. 
-                symbol_timeframes = coin_obj.get_symbol_timeframes() # Used to determine whether coin exists in local storage or not.
-                timeframes = [interval.split('_')[-1] for interval in to_monitor[coin][tradingpair]]
 
-                if len(symbol_timeframes) == 0:  
-                    # This means coin had no local storage
-                    if tradingpair != None:
-                        if coin_obj.get_candles(tradingpair=tradingpair, intervals=timeframes):
-                            pass # Binance succesfully returned candles for coin-tradingpair/timeframe.
-                        else:
-                            print(f"{coin}{tradingpair} is not avaliable on Binance.")
-                            continue # Binance rejected request.
-                    elif coin_obj.get_candles(tradingpair='USDT', intervals=DEFAULT_TIMEFRAMES):
-                        tradingpair = 'USDT' # No tradingpair specified so deafult tradingpair assigned to coin.
-                    else:
-                        print(f"{coin} is not avaliable on Binance.")
-                        continue # This means coin provided is invalid for Binance.
-                elif tradingpair != None:
-                    # Server has local storage of coin.
-                    if coin_obj.get_candles(tradingpair=tradingpair, intervals=timeframes):
-                        pass # This either added a new tradingpair or updated the existing stored one.
-                    else:
-                        print(f"{coin}{tradingpair} is not avaliable on Binance.")
-                        continue # This means newly entered tradingpair is invalid for Binance. 
+                # Initalisation
+                if len(coin_obj.get_symbol_timeframes()) == 0 and not tradingpair:
+                    if not coin_obj.get_candles(tradingpair='USDT', timeframes=DEFAULT_TIMEFRAMES):
+                        continue
+                    tradingpair = 'USDT' # default timeframe when none provided (e.g. from server start up)
+                elif tradingpair:
+                    timeframes = [tf.split('_')[-1] for tf in to_monitor[coin][tradingpair] if tf in INTERVALS]
+                    if not timeframes:
+                        print(f'Invalid timeframes entered for {coin}{tradingpair}. Choose from: {INTERVALS}')
+                        continue
+                    if not coin_obj.get_candles(tradingpair=tradingpair, timeframes=timeframes):
+                        continue  # This means newly entered tradingpair is invalid for Binance.
+
                 print(f"Server will start monitoring {coin}{tradingpair}.\n") if tradingpair != None else print(f"Server will start monitoring {coin}.\n")
                 added_coins.add(coin)
 
@@ -243,14 +233,14 @@ class Notification_server():
             if coin in self.server_instruction['request_interval']:
                 self.server_instruction['request_interval'].remove(coin) # Let's request_interval thread know which coins have started scoring.
                 symbol_timeframes = self.monitored_coins[coin] # Only monitor specified tradingpairs.
-                coin_score = coin_obj.current_score(to_monitor=symbol_timeframes) # Retreve coin score and analysis summary. 
-                bull_score = coin_score[0][1]
-                bear_score = coin_score[0][2]
+                score_summary = coin_obj.current_score(symbol_timeframes) # Retreve coin score and analysis summary. 
+                bull_score = score_summary[1]
+                bear_score = score_summary[2]
 
                 if re.search(coin, str(self.server_instruction['drop'])):
                     continue # If user just entered coin to drop when score already processed.
                 if len(self.message_backlog) < len(self.monitored_coins):
-                    self.message_backlog.append(coin_score) # Send data to stdout method. 
+                    self.message_backlog.append(score_summary) # Send data to stdout method. 
                 try:
                     if self.mode_1_messages[coin] and not self.server_instruction['new_user']:
                         self.mode_1_messages.pop(coin) # To prevent recuring posting of mode1 type messages.
@@ -258,11 +248,11 @@ class Notification_server():
                     pass
 
                 if bull_score > previous_bull_score or bear_score > previous_bear_score:
-                    if coin_score[0][1] >= self.BULL_THRESHOLD:
+                    if score_summary[0][1] >= self.BULL_THRESHOLD:
                         # coin_obj.generate_result_files(mode='signal') # Generate/replace signal graph/csv files in server_mail/outgoing for users to send
                         pass
                         self.mode_1_messages[coin] = f"BULL_{self.BULL_THRESHOLD}" # Send message to all users subscribed to this coin
-                    elif coin_score[0][2] >= self.BEAR_THRESHOLD:
+                    elif score_summary[0][2] >= self.BEAR_THRESHOLD:
                         # coin_obj.generate_result_files(mode='signal')
                         self.mode_1_messages[coin] = f"BEAR_{self.BEAR_THRESHOLD}" 
 
@@ -555,21 +545,21 @@ class Notification_server():
                 print(datetime.now().strftime('%I:%M %p'))
                 for message in messages:
                     if message[-1] == "coin_score":
-                        for symbol_summary in message[:-1]:
-                            max_score = len(symbol_summary[-1]) * 6
-                            if self.server_instruction['stdout_detail']:
-                                print('\n\n' + '='*130)
-                                print(f"\nCoin pair {symbol_summary[0]} monitoring update:")
-                                print(f"Current price: {symbol_summary[-2]}")   
-                                print(f"Bull score: {symbol_summary[1]} out of {max_score}, change score: {symbol_summary[3]} out of {max_score}")
-                                print(f"Bear score: {symbol_summary[2]} out of {max_score}, change score: {symbol_summary[4]} out of {max_score}")
-                                print(f"Overview:")
-                                print(json.dumps(symbol_summary[-1], indent=4))
-                            else:
-                                mood = 'BULL' if symbol_summary[1] > symbol_summary[2] else 'BEAR'
-                                score = symbol_summary[1] if symbol_summary[1] > symbol_summary[2] else symbol_summary[2]
-                                change = symbol_summary[3] if symbol_summary[3] > symbol_summary[4] else symbol_summary[4]
-                                print(f'Coin: {symbol_summary[0]}, price: {symbol_summary[-2]}, {mood}: {score}/{max_score}, change: {change} signal: {symbol_summary[5]}')
+                        summary = message[:-1]
+                        max_score = len(summary[-1]) * 6
+                        if self.server_instruction['stdout_detail']:
+                            print('\n\n' + '='*130)
+                            print(f"\nCoin pair {summary[0]} monitoring update:")
+                            print(f"Current price: {summary[5]}")   
+                            print(f"Bull score: {summary[1]} out of {max_score}, change score: {summary[3]} out of {max_score}")
+                            print(f"Bear score: {summary[2]} out of {max_score}, change score: {summary[3]} out of {max_score}")
+                            print(f'Signal >>> {summary[4]} <<<')
+                            print(f"Overview:")
+                            print(json.dumps(summary[-1], indent=4))
+                        else:
+                            mood = 'BULL' if summary[1] > summary[2] else 'BEAR'
+                            score = summary[1] if summary[1] > summary[2] else summary[2]
+                            print(f'Symbol: {summary[0]}, price: {summary[5]}, {mood} {score}/{max_score}, change: {summary[3]} signal: {summary[5]}')
                         if self.server_instruction['stdout_detail']:
                             print('='*130 + '\n\n')
                 self.server_instruction['score'] = 0
@@ -666,6 +656,8 @@ class Notification_server():
                 tradingpairs = str(input(f"Input {coin} trading pairs: ")).upper() 
                 if self.re_search(tradingpairs):
                     continue
+                if tradingpairs.strip() == '':
+                    tradingpairs = 'USDT' # default
                 break
             tradingpairs = tradingpairs.split(' ')
             for tradingpair in tradingpairs:
@@ -696,7 +688,7 @@ class Notification_server():
                         # This means server does not have any timeframes of this coin/trading pair stored. Deafult timeframes will be monitored.
                         print(f"Server will start monitoring {coin + tradingpair} with deafult timeframes: {DEFAULT_TIMEFRAMES}")
                         input_coin_dict[coin][tradingpair] = DEFAULT_TIMEFRAMES.copy()
-
+                # TODO I think it should be like, enter nothing to have default timeframes, otherwise specify custom timeframes
                 while True:
                     timeframes = input('OPTIONAL: Input additional timeframes: ') # White spaces will be handled in Coin.get_candles(). 
                     if self.re_search(timeframes):
