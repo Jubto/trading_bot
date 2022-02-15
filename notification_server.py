@@ -31,13 +31,17 @@ class Notification_server():
     '''
 
     # Server enums
-    SERVER_SPEED = 1 # Deafult server tick speed 5 seconds.
+    SERVER_SPEED = 2 # Deafult server tick speed 2 seconds.
     REQUEST_INTERVAL = 60 # Deafult server Binance candle request interval.
     BULL_THRESHOLD = 25 # Deafult thresholds before notification sent. Each user can set their own threshold under their attributes. (eventually implement ML)
     BEAR_THRESHOLD = 25 # Eventually will make both of these dicts with keys as coins, value as threshold.
     MODE_2_REQUEST = 0 # Whenever a user thread requires a new update, this will handle that.
     
     def __init__(self, coins=[]):
+
+        # TODO Need a dictionary which stores all the thresholds for all monitored symbols - obtained from optimise signal threshold
+        # Make a command which allows you to change it
+        # make a command to print each threshold for each symbol
 
         self.tickspeed_handler = Event() # Event object to handle server tick speed. 
         self.server_shutdown = Event() # Event object to handle server shutdown if command 'quit' is entered.
@@ -46,23 +50,35 @@ class Notification_server():
         self.data_path = self.root_path + '/coindata'
         self.script_path = self.root_path + '/notification_scripts'
         self.attribute_path = self.script_path + '/server_attributes'
-        self.monitored_coins = {} # Dict of coins server is currently monitoring - example  {coin:[symbol_timeframe, symbol_timeframe, ...]}
+        self.monitored_coins = {} # Coins server is currently monitoring {coin: symbol: [timeframe, timeframe...], coin2: symbol1: [...]}
         self.coin_objs = {} # E.g. {'btc': btc_obj, 'rvn': rvn_obj}
         self.server_instruction = {
-            'drop': '',
+            'drop': {'to_drop':''},
             "stdout": 0,
             'stdout_detail': 0,
             'request_interval': [],
-            'pause': 0,
+            'pause_stdout': 0,
             'boost': 0,
             'score': 0,
             'new_user': ''
+        }      
+        self.server_messages = {
+            'current_monitoring':0,
+            'removed_items':{},
+            'current_score':{},
+            'signals':{},
+            'lastest_signals':{},
+            'retain_score':[],
+            'graph_trend':[],
+            'graph_lookahead':[],
+            'graph_PA':[],
+            'graph_trade_simulation':[],
+            'graph_binance_scan':''
         }
-        self.message_backlog = [] # List of messages for server_stdout() to process in order. 
-        self.server_users = {} # Dict keeping track of server users and their attributes (coins, update_intervals, thresholds, previlages). 
-        self.mode_1_messages = {} # Dict to store mode 1 (signal) like messages for server_user thread to read/send.
-        self.mode_2_messages = {} # Dict to store mode 2 (update) like messages for server_user thread to read/send.
-        self.outgoing_messages = {} # Dict of messages from all users which get seqentially delivered to each respective user email
+        self.server_users = {} # Keeps track of server users and their attributes (coins, update_intervals, thresholds, previlages). 
+        self.mode_1_messages = {} # Stores mode 1 (signal) like messages for server_user thread to read/send.
+        self.mode_2_messages = {} # Stores mode 2 (update) like messages for server_user thread to read/send.
+        self.outgoing_messages = {} # Stores messages from all users which get seqentially delivered to each respective user email
         self.postfix_init = False
         self.server_owner_gmail = ''
 
@@ -73,7 +89,6 @@ class Notification_server():
             self.monitor_all_coins(coins=coins) # Monitor all coins given as arguments if valid.
         else:
             self.monitor_all_coins() # Monitor all coins stored in local storage, if no coins, then prompt user input. 
-   
         Thread(target=self.server_tick_speed, name='server_tick', daemon=True).start() # Global server tick speed.
         Thread(target=self.request_interval_handler, name='server_intervals', daemon=True).start() # Global server timer for sending candle requests.
         Thread(target=self.server_stdout, name='server_stdout', daemon=True).start() # Handles smooth server stdout. 
@@ -115,7 +130,7 @@ class Notification_server():
         '''Thread handles user inputs'''
 
         while True:
-            user_input = input().strip().lower() # Pauses thread until user input.
+            user_input = input().strip().lower()
             if user_input == 'commands':
                 self.server_commands()
             elif user_input == 'quit':
@@ -123,13 +138,15 @@ class Notification_server():
             elif user_input == 'score':
                 self.server_instruction['score'] = 1
             elif user_input == 'trend':
-                Thread(target=self.get_trend(), name='get_trends', daemon=True).start()
+                Thread(target=self.get_trend_graph(), name='get_trends', daemon=True).start()
             elif user_input == 'retain':
                 Thread(target=self.get_retain_scoring(), name='get_retain', daemon=True).start()
             elif user_input == 'graph1':
                 Thread(target=self.get_look_ahead_graph(), name='get_look_ahead_graph', daemon=True).start()
             elif user_input == 'signals':
                 self.get_latest_signals()
+            elif user_input == 'clear signals':
+                self.server_messages['signals'] = {}
             elif user_input == 'stdout':
                 self.toggle_stdout()
             elif user_input == 'stdout_detail':
@@ -139,7 +156,7 @@ class Notification_server():
             elif user_input == 'server_speed':
                 self.update_timers('server_speed')
             elif user_input == 'monitoring':
-                self.current_monitoring()
+                self.server_messages['current_monitoring'] = 1
             elif user_input == 'monitor':
                 self.input_monitor_new()
             elif user_input == 'all':
@@ -160,16 +177,20 @@ class Notification_server():
 
     def add_to_monitoring(self, to_monitor={}):
         '''Handles validating and adding items into the server monitoring dictionary monitored_coins'''
-        print(f'to_monitor: {to_monitor}')
+
+        # filter
+        # seperate using STANDARD_TRADING_PAIRS
+        # initalise and add
+
         # This section handles determining whether coin is valid with Binance, if so it will add to server monitoring.
-        added_coins = set()
+        added_coins = []
         for coin in to_monitor:
             coin_obj = Coin(coin)
             for tradingpair in to_monitor[coin]:
                 print(f'Server setting up monitoring for {coin}{tradingpair if tradingpair else ""}...')
 
                 # Initalisation
-                if len(coin_obj.get_symbol_timeframes()) == 0 and not tradingpair:
+                if not coin_obj.get_symbol_timeframes() and not tradingpair:
                     if not coin_obj.get_candles(tradingpair='USDT', timeframes=DEFAULT_TIMEFRAMES):
                         continue
                     tradingpair = 'USDT' # default timeframe when none provided (e.g. from server start up)
@@ -181,323 +202,359 @@ class Notification_server():
                     if not coin_obj.get_candles(tradingpair=tradingpair, timeframes=timeframes):
                         continue  # This means newly entered tradingpair is invalid for Binance.
 
-                print(f"Server will start monitoring {coin}{tradingpair}.\n") if tradingpair != None else print(f"Server will start monitoring {coin}.\n")
-                added_coins.add(coin)
-
                 # Add coin to server monitoring list
-                if coin not in self.monitored_coins.keys():
-                    self.monitored_coins[coin] = []
+                if coin not in self.monitored_coins:
+                    added_coins.append(coin)
+                    self.monitored_coins[coin] = {}
                     self.coin_objs[coin] = coin_obj
-                symbol_timeframes = coin_obj.get_symbol_timeframes() # New coin csv files may have been added. 
-                for symbol_timeframe in symbol_timeframes:
-                    symbol = symbol_timeframe.split('_')[0].upper()
-                    if tradingpair == None or symbol == coin_obj.coin + tradingpair:
-                        if symbol_timeframe not in self.monitored_coins[coin]:
-                            self.monitored_coins[coin].append(symbol_timeframe) # Append only tradingpair/timeframe which server will actively monitoring.
-                self.monitored_coins[coin].sort()
-        return added_coins # Return set of succesfully added coins. 
+                stored_symbol_timeframes = coin_obj.get_symbol_timeframes()
+                symbol_added = coin_obj.coin + tradingpair
+                self.monitored_coins[coin][symbol_added] = stored_symbol_timeframes[symbol_added]
+                print(f"Server will start monitoring {coin}{tradingpair if tradingpair else ''}.\n")
+        return added_coins # Return succesfully added coins. 
 
 
     def monitor_coin(self, coin):
         '''Thread starts the monitoring and score calculation of given coin. Handles external signals to drop activity'''
 
         coin_obj = self.coin_objs[coin]
-        previous_bull_score = 0
-        previous_bear_score = 0
         while True:
             self.tickspeed_handler.wait() # Releases every server tick.
 
-            # Check to see whether coin drop instruction is activate.
-            if self.server_instruction['drop'] and coin in self.server_instruction['drop']:    
-                item_to_drop = self.server_instruction['drop']
-                self.server_instruction['drop'] = ''
-                if re.search(item_to_drop.rstrip('1')[1:], str(self.monitored_coins[coin])):
-                    if '1' == item_to_drop[-1]:
-                        item_to_drop = item_to_drop.rstrip('1')
-                        if '1' == item_to_drop[0]:
-                            coin_obj.remove_coin() # Remove from database. 
-                        elif '2' == item_to_drop[0]:
-                            coin_obj.remove_symbol(item_to_drop[1:]) # Remove from database. 
-                        else:
-                            coin_obj.remove_timeframe(item_to_drop[1:]) # Remove from database. 
-                    clone_monitored_coins = self.monitored_coins[coin].copy()
-                    for pair in clone_monitored_coins:
-                        if item_to_drop[1:] == pair or item_to_drop[1:] in pair:
-                            self.monitored_coins[coin].remove(pair)
-                    print(f"The following has been dropped: {item_to_drop[1:]}")
-                    if '1' == item_to_drop[0] or len(self.monitored_coins[coin]) == 0:
-                        self.monitored_coins.pop(coin)
-                        return 0 # Drop this coin thread.
+            # Check to see whether coin needs to be dropped
+            if coin in self.server_instruction['drop']['to_drop']:
+                to_drop = self.server_instruction['drop']
+                self.server_instruction['drop'] = {'to_drop':''}
+                if to_drop['to_drop'] in self.get_stored_coins():
+                    if to_drop['db_drop']:
+                        coin_obj.remove_coin() # Remove from database.
+                    self.monitored_coins.pop(to_drop['coin'])
+                    self.server_messages['removed_items']['to_drop'].remove(to_drop['to_drop'])
+                elif to_drop['to_drop'] in self.get_stored_symbols():
+                    if to_drop['db_drop']:
+                        coin_obj.remove_symbol(to_drop['symbol'])
+                    self.monitored_coins[coin].pop(to_drop['symbol'])
+                    self.server_messages['removed_items']['to_drop'].remove(to_drop['to_drop'])
+                elif to_drop['to_drop'] in self.get_stored_symbol_timeframes():
+                    symbol, timeframe = to_drop['to_drop'].split('_')
+                    if to_drop['db_drop']:
+                        coin_obj.remove_timeframe(to_drop['to_drop'])
+                    self.monitored_coins[coin][symbol].remove(timeframe)
+                    self.server_messages['removed_items']['to_drop'].remove(to_drop['to_drop'])
+                if coin not in self.monitored_coins or not self.monitored_coins[coin]:
+                    return 0 # Drop this coin thread.
 
             # Check to see whether request timer has activated.
             if coin in self.server_instruction['request_interval']:
                 self.server_instruction['request_interval'].remove(coin) # Let's request_interval thread know which coins have started scoring.
-                symbol_timeframes = self.monitored_coins[coin] # Only monitor specified tradingpairs.
-                score_summary = coin_obj.current_score(symbol_timeframes) # Retreve coin score and analysis summary. 
-                bull_score = score_summary[1]
-                bear_score = score_summary[2]
+                for symbol in self.monitored_coins[coin]:
+                    score_summary = coin_obj.current_score(symbol, self.monitored_coins[coin][symbol])
+                    signal = score_summary[4]
+                    if coin in self.server_instruction['drop']['to_drop']:
+                        continue # If user just entered coin to drop when score already processed.
+                    if symbol not in self.server_messages['current_score']:
+                        self.server_messages['current_score'][symbol] = score_summary
+                    if signal:
+                        self.server_messages['signals'][symbol] = [
+                            signal,
+                            datetime.now().strftime("%I:%M %p"),
+                            score_summary
+                        ]
 
-                if re.search(coin, str(self.server_instruction['drop'])):
-                    continue # If user just entered coin to drop when score already processed.
-                if len(self.message_backlog) < len(self.monitored_coins):
-                    self.message_backlog.append(score_summary) # Send data to stdout method. 
-                try:
-                    if self.mode_1_messages[coin] and not self.server_instruction['new_user']:
-                        self.mode_1_messages.pop(coin) # To prevent recuring posting of mode1 type messages.
-                except KeyError:
-                    pass
-
-                if bull_score > previous_bull_score or bear_score > previous_bear_score:
-                    if score_summary[0][1] >= self.BULL_THRESHOLD:
-                        # coin_obj.generate_result_files(mode='signal') # Generate/replace signal graph/csv files in server_mail/outgoing for users to send
+                    try:
+                        if self.mode_1_messages[coin] and not self.server_instruction['new_user']:
+                            self.mode_1_messages.pop(coin) # To prevent recuring posting of mode1 type messages.
+                    except KeyError:
                         pass
-                        self.mode_1_messages[coin] = f"BULL_{self.BULL_THRESHOLD}" # Send message to all users subscribed to this coin
-                    elif score_summary[0][2] >= self.BEAR_THRESHOLD:
-                        # coin_obj.generate_result_files(mode='signal')
-                        self.mode_1_messages[coin] = f"BEAR_{self.BEAR_THRESHOLD}" 
 
                 if self.MODE_2_REQUEST:
                     # coin_obj.generate_result_files(mode='update')
                     self.MODE_2_REQUEST -= 1 # Once the value becomes zero, any user thread which is ready will send a mode 2 email.
 
 
-    def current_monitoring(self, stored=False):
-        '''Returns list of coins, trading pairs and timeframes server is currently monitoring'''
-
-        coins_dict = {}
-        if stored:
-            for coin_path in glob(self.data_path + '/*'):
-                coin = coin_path.split('/')[-1]
-                coins_dict[coin] = [tradingpair.split('/')[-1][:-4] for tradingpair in glob(f"{coin_path}/{coin}*")]
-        else:
-            coins_dict = self.monitored_coins.copy()
-
-        if coins_dict:
-            if stored:
-                print(f"Server has the following pairs in the database:")
-            else:
-                print(f"Server is currently monitoring:")
-
-            for coin in coins_dict:
-                print(f"coin {coin}:")
-                tradingpairs = {}
-                for symbol_timeframe in coins_dict[coin]:
-                    tradingpair = symbol_timeframe.split('_')[0]
-                    timeframe = symbol_timeframe.split('_')[-1]
-                    try:
-                        tradingpairs[tradingpair].append(timeframe)
-                    except KeyError:
-                        tradingpairs[tradingpair] = [timeframe]
-                for tradingpair in tradingpairs:
-                    print(tradingpair, ':', [timeframe for timeframe in sorted(tradingpairs[tradingpair], key= lambda i : INTERVALS.index(i))])
-            print('')
-            
-        else:
-            print(f"Server has no stored or monitored coins. Enter command 'monitor' to add new coins.")
-
-
     def monitor_all_coins(self, coins=None):
         '''Hanndles server coin monitoring initiation and 'all' command'''
 
         if not coins:
-            coins = self.get_stored_coins()
-            if len(coins) == 0:
-                self.input_monitor_new() # If no coins are found in coindata directory, prompt user to enter coin.
-
-        coins_to_add = set()
-        coins_to_add = coins_to_add.union(self.add_to_monitoring(to_monitor= {coin.upper():{None:[]} for coin in coins})) # Validate each coin entered, add to monitoring
-        self.add_new_coins(coins_to_add) # Start thread for each coin if one doesn't already exist.
+            if not self.get_stored_coins():
+                self.input_monitor_new() # prompt user to enter coin.
+        self.add_new_coins(self.add_to_monitoring({coin.upper():{None:[]} for coin in coins})) # Validates each coin entered
 
 
     def get_stored_coins(self):
         '''returns list of coins stored in database'''
-        
-        paths = glob(f'{self.data_path}/*')
-        return [path.split('/')[-1] for path in paths if 'binance_scan' not in path]
+
+        return [path.split('/')[-1] for path in glob(f'{self.data_path}/*') if 'binance_scan' not in path]
 
 
     def get_stored_symbols(self):
-        '''returns a dictionary containing all the coins and their symbols stored in the database'''
+        '''returns a dictionary containing all symbols stored in the database'''
 
-        stored_coins = self.get_stored_coins()
         stored_symbols = []
-        for coin in stored_coins:
-            stored_symbols.append(set([path.split('/')[-1].split('_')[0] for path in glob(f'{self.data_path}/{coin}/*') if '.csv' in path]))
-        return [symbol for symbols in stored_symbols for symbol in symbols]
+        for coin in self.get_stored_coins():
+            stored_symbols.extend(list(Coin(coin).get_symbol_timeframes()))
+        return stored_symbols
 
+
+    def get_stored_symbol_timeframes(self):
+        '''returns a dictionary containing all symbol_timeframes stored in the database'''
+
+        stored_symbol_timeframes = []
+        for coin in self.get_stored_coins():
+            for symbol, timeframes in Coin(coin).get_symbol_timeframes().items():
+                stored_symbol_timeframes.extend([f'{symbol}_{tf}' for tf in timeframes])
+        return stored_symbol_timeframes
     
-    def find_coin_from_symbol(self, symbol):
+
+    def find_coin(self, symbol):
         '''Returns coin from given symbol string'''
         coin = [symbol.split(tradingpair)[0] for tradingpair in STANDARD_TRADING_PAIRS if tradingpair in symbol]
         return None if len(coin) == 0 else coin[0]
 
 
-    def get_trend(self, advanced=False):
-        '''Returns the last x many score entries for a given interval for a given coin'''
-
-        query = input('Enter a symbol (coin_pair), number of past scores, and the interval you wish to see, e.g. `BTCUSDT 50 1h` >>> ').split()
-        try:
-            if len(query) != 3:
-                print('Invalid number of arguments\n')
-                return
-            symbol, num_scores, interval = query
-            symbol = symbol.upper()
-            coin = self.find_coin_from_symbol(symbol)
-            num_scores = int(num_scores)
-            if coin not in self.get_stored_coins():
-                print(f'{coin} is not currently being monitored by this server. Please add it using `monitor` command first.\n')
-                return
-            if symbol not in self.get_stored_symbols():
-                print(f'{symbol} is not currently being monitored by this server. Please add it using `monitor` command first.\n')
-                return
-            if interval not in INTERVALS:
-                raise ValueError
-        except ValueError:
-            print('Invalid query, please enter a symbol (coin_pair), number of past scores, and an interval E.g.`trend BTC 50 1h`\n')
-            return
-        
-        timeframes = []
-        threshold = None
-        if advanced:
-            timeframes = input('Specify custom timeframes (e.g. 1h 4h 12h 1d 3d 1w) or skip to use default timeframes.').split()
-            threshold = input('Specify custom threshold (e.g. bull:15|bear:10) or skip to use optimal threshold.').upper().split()
-        print(self.coin_objs[coin].get_trend_stdout(symbol, num_scores, interval, timeframes, threshold))
-        print('\n')
-
-
     def get_retain_scoring(self):
         '''Generates a retain score file for the given coin + pair'''
-        #TODO allow custom timeframes
-        query = input('Enter a symbol (coin_pair) `BTC_USDT` >>> ')
-        try:
-            coin = query.split('_')[0].upper()
-            symbol = query.replace('_', '').upper()
-            paths = glob(self.data_path + '/*')
-            coins = [path.split('/')[-1] for path in paths]
-            if len(query.split()) != 1:
-                print('Invalid number of arguments\n')
-                return
-            if coin not in coins:
-                print(f'{coin} is not currently being monitored by this server. Please add it using `monitor` command first.\n')
-                return
-            if symbol not in ''.join(self.monitored_coins[coin]):
-                print(f'{symbol} is not currently being monitored by this server. Please add it using `monitor` command first.\n')
-                return
-        except AttributeError:
-            print('Invalid query, please enter a symbol (coin_pair) E.g. `retain BTC_USDT`\n')
+
+        symbol = input('Enter a symbol, E.g. `BTCUSDT` >>> ').upper()
+        if symbol not in self.get_stored_symbols():
+            print(f'{symbol} not in database. Please add it using `monitor` command first.\n')
             return
-        
-        self.coin_objs[coin].generate_retain_score(symbol)
-        print(f'Retain score summary for {symbol} has completed. \
-            See file located at: {self.data_path}/analysis/retain_scoring/{symbol}/')
+
+        path = self.coin_objs[self.find_coin(symbol)].generate_retain_score(symbol, self.monitored_coins[symbol])
+        self.server_messages['retain_score'] = [symbol, path]
+
+
+    def get_latest_signals(self):
+        '''
+        For each monitored symbol this returns stats on how the latest signal performed
+        '''
+
+        signal_stats = {}
+        for coin in self.monitored_coins:
+            for symbol in self.monitored_coins[coin]:
+                signal_stats[symbol] = self.coin_objs[coin].get_latest_signal_stats(symbol)
+        for symbol in signal_stats:
+            self.server_messages['lastest_signals'][symbol] = signal_stats[symbol]
+
+
+    def get_trend_graph(self, advanced=False):
+        '''Returns the last x many score entries for a given interval for a given coin'''
+
+        # TODO  have the bull/bear/change score super imposed in the background
+        symbol = input('Enter a symbol, E.g. `BTCUSDT` >>> ').upper()
+        if symbol not in self.get_stored_symbols():
+            print(f'{symbol} not in database. Please add it using `monitor` command first.\n') #TODO possible make an error message
+            return
+
+        path = self.coin_objs[self.find_coin(symbol)].graph_trend(symbol, self.monitored_coins[symbol])
+        self.server_messages['graph_trend'] = [symbol, path]
 
 
     def get_look_ahead_graph(self):
         '''Generates a retain score graph for the given coin + pair'''
-        #TODO allow custom timeframes
-        query = input('Enter a symbol (coin_pair) `BTC_USDT` >>> ')
-        try:
-            coin = query.split('_')[0].upper()
-            symbol = query.replace('_', '').upper()
-            paths = glob(self.data_path + '/*')
-            coins = [path.split('/')[-1] for path in paths]
-            if len(query.split()) != 1:
-                print('Invalid number of arguments\n')
-                return
-            if coin not in coins:
-                print(f'{coin} is not currently being monitored by this server. Please add it using `monitor` command first.\n')
-                return
-            if symbol not in ''.join(self.monitored_coins[coin]):
-                print(f'{symbol} is not currently being monitored by this server. Please add it using `monitor` command first.\n')
-                return
-        except AttributeError:
-            print('Invalid query, please enter a symbol (coin_pair) E.g. `retain BTC_USDT`\n')
+
+        symbol = input('Enter a symbol, E.g. `BTCUSDT` >>> ').upper()
+        if symbol not in self.get_stored_symbols():
+            print(f'{symbol} not in database. Please add it using `monitor` command first.\n')
             return
-        
-        self.coin_objs[coin].graph_look_ahead_data(symbol)
-        print(f'Graph summary for {symbol} has completed. \
-            See file located at: {self.data_path}/analysis/graphs/look_aheads/{symbol}/')
+
+        path = self.coin_objs[self.find_coin(symbol)].graph_look_ahead_data(symbol, self.monitored_coins[symbol])
+        self.server_messages['graph_lookahead'] = [symbol, path]
 
     
     def get_trading_simulation_graph(self):
-        pass
+
+        symbol = input('Enter a symbol, E.g. `BTCUSDT` >>> ').upper()
+        if symbol not in self.get_stored_symbols():
+            print(f'{symbol} not in database. Please add it using `monitor` command first.\n')
+            return
+
+        path = self.coin_objs[self.find_coin(symbol)].graph_trading_simulation(symbol, self.monitored_coins[symbol])
+        self.server_messages['graph_trade_simulation'] = [symbol, path]
 
     
     def get_pa_signal_graph(self):
-        pass
+
+        symbol = input('Enter a symbol, E.g. `BTCUSDT` >>> ').upper()
+        if symbol not in self.get_stored_symbols():
+            print(f'{symbol} not in database. Please add it using `monitor` command first.\n')
+            return
+
+        path = self.coin_objs[self.find_coin(symbol)].graph_signal_against_pa(symbol, self.monitored_coins[symbol])
+        self.server_messages['graph_PA'] = [symbol, path]
 
 
-    def get_latest_signals(self):
-        '''Returns the date of the latest peak, how many days ago, the price it was, the score, the timeframe scores, the max gains since then, the current gains'''
+    def server_stdout(self):
+        '''Thread handles server stdout (so that thread stdouts don't overlap)'''
 
-        #TODO I don't like how this accesses the coindata files, make into coin method
-        blocksize = 25000
-        monitored_symbols = set([f'{coin}_{symbol_tf.split("_")[0]}' for coin, symbol_tfs in self.monitored_coins.items() for symbol_tf in symbol_tfs])
-        filename_ext = get_filename_extension()
-        for coin_symbol in monitored_symbols:
-            coin, symbol = coin_symbol.split('_')
-            trading_pair = symbol.split(coin)[-1]
-            self.coin_objs[coin].get_latest_signal_stats(symbol)
-            # self.coin_objs[coin].compute_historical_score(symbol)
-            # with open(f'{self.data_path}/{coin}/analysis/historical_scorings/{symbol}/historical_scoring_{symbol}_{filename_ext}.csv') as f:
-            #     header_chunk = f.read(500).split('\n')
-            #     header_len = len(header_chunk[0].split(','))
-            #     timeframes = [col.split('_')[1] for col in header_chunk[0].split(',')[5:-1:2]]
-            #     threshold = int(((len(header_chunk[0].split(',')) - 6)*3)*0.5)
-            #     max_score = int((len(header_chunk[0].split(',')) - 6)*3)
-            #     f.seek(0, os.SEEK_END) # move to eof
-            #     eof = f.tell()
-            #     next_block = eof - blocksize
-            #     peak_buffer, peak, peak_price = 0, 0, 0
-            #     best_price = [float('inf'), 0] # min, max
-            #     best_price_snapshot = []
-            #     peak_row = []
-            #     while next_block > 0:
-            #         f.seek(next_block)
-            #         data = f.read(blocksize).split('\n') # load the end of the csv
-            #         data.reverse()
-            #         if next_block == eof - blocksize:
-            #             latest_row = data[1].split(',')
-            #             print(f'latest row= :{latest_row}')
-            #         next_block -= blocksize
-            #         for count, row in enumerate(csv.reader(data)):
-            #             if count < 10:
-            #                 print(row)
-            #             if len(row) != header_len:
-            #                 continue
-            #             peak_buffer -= 1
-            #             score = max(int(row[2]), int(row[3]))
-            #             best_price[0] = min(best_price[0], float(row[1]))
-            #             best_price[1] = max(best_price[1], float(row[1]))
-            #             if score >= threshold and score > peak:
-            #                 peak = score
-            #                 peak_price = float(row[1])
-            #                 best_price_snapshot = best_price.copy()
-            #                 peak_row = row
-            #                 peak_buffer = 12
-            #                 continue
-            #             elif peak and not peak_buffer:
-            #                 signal = 'SELL' if int(peak_row[2]) > int(peak_row[3]) else 'BUY'
-            #                 alt_action = 'BUY' if signal == 'SELL' else 'SELL'
-            #                 desired_assest = coin if signal == 'SELL' else trading_pair
-            #                 # max_gain = 100 - (best_price_snapshot[0] / peak_price)*100 if signal == 'SELL' else (best_price_snapshot[1] / peak_price)*100 - 100
-            #                 # best_gain_price = best_price_snapshot[0] if signal == 'SELL' else best_price_snapshot[1]
-            #                 # current_gain = 100 - (float(latest_row[1]) / peak_price)*100 if signal == 'SELL' else (float(latest_row[1]) / peak_price)*100 - 100
-            #                 # The gain you get from responding to the latest signal (i.e. if signal was SELL, then the gain you make from BUYing now)
-            #                 max_gain = (peak_price / best_price_snapshot[0])*100 - 100 if signal == 'SELL' else (best_price_snapshot[1] / peak_price)*100 - 100
-            #                 best_gain_price = best_price_snapshot[0] if signal == 'SELL' else best_price_snapshot[1]
-            #                 current_gain = (peak_price / float(latest_row[1]))*100 - 100 if signal == 'SELL' else (float(latest_row[1]) / peak_price)*100 - 100                            
-            #                 tf_indexs = list(range(5, len(peak_row) - 1 ,2)) if signal == 'BUY' else list(range(6, len(peak_row) - 1 ,2))
-            #                 tf_scores = [f'{timeframes[i]}: {score}' for i, score in enumerate([peak_row[i] for i in tf_indexs])]
-            #                 uts = int(peak_row[0][:-3])
-            #                 delta = int((datetime.now() - datetime.fromtimestamp(uts)).total_seconds() // 3600)
-            #                 date = datetime.fromtimestamp(uts).strftime('%d/%m/%y %a %I:%M %p')
-            #                 print(f'\n===================================== Signals for {symbol} =====================================')
-            #                 print(f'{signal} signal {delta} hours ago at {date}')
-            #                 print(f'Price was: {peak_row[1]}, score: {peak}/{max_score}, change score: {peak_row[4]}/{max_score}, timeframe scores: {", ".join(tf_scores)}')
-            #                 print(f'Max gain from {alt_action} would be {max_gain:.2f}% of {desired_assest} at ${best_gain_price}, gain now from {alt_action} is {current_gain:.2f}% of {desired_assest} at ${latest_row[1]}\n')
-            #                 next_block = -1000
-            #                 break
+        # TODO add coin drops, maybe coin adds, etc. literally everything
+        while True:
+            self.tickspeed_handler.wait() # Releases every server tick.
+            while True:
+                if self.server_instruction['pause_stdout']:
+                    time.sleep(1)
+                    continue
+                break
+
+            posts = [m for m_type in self.server_messages for m in self.server_messages[m_type] 
+                        if bool(m) and m_type != 'current_score' and m_type != 'removed_items']
+            if len(self.server_messages['current_score']) == sum([len(self.monitored_coins[coin]) for coin in self.monitored_coins]):
+                if self.server_instruction['stdout']:
+                    self.server_instruction['score'] = 1 
+                if self.server_instruction['score']: # Can be turned on via user input also.
+                    posts.append('score_ready') # Only stdout when all symbol scores have been calculated
+            
+            if self.server_messages['removed_items']:
+                if self.server_messages['removed_items']['complete']:
+                    posts.append('remove_ready')
+
+            if posts:
+                print(f'{"*"*25} NEW server messages {"*"*25}')
+                print(f'Timestamp: {datetime.now().strftime("%d/%m/%y %I:%M %p")}\n')
+               
+                if 'remove_ready' in posts:
+                    removed_set = self.server_messages['removed_items']['to_drop']
+                    original_set = self.server_messages['removed_items']['to_drop_copy']
+                    failed_queries = original_set.difference(removed_set)
+                    dropped_monitorings = []
+                    dropped_databases = []
+                    print('Drop command has completed!')
+                    for query in removed_set:
+                        if '-DROP' in query:
+                            dropped_databases.append(query)
+                        else:
+                            dropped_monitorings.append(query)
+                    if dropped_databases:
+                        print(f'The following queries were removed from monitoring: {dropped_monitorings}')
+                    if dropped_databases:
+                        print(f'The following queries were removed from database: {dropped_databases}')
+                    if failed_queries:
+                        print(f'The following queries were invalid or not present: {failed_queries}')
+                    self.server_messages['current_monitoring'] = 1
+
+                if 'score_ready' in posts:
+                    self.server_instruction['score'] = 0
+                    symbol_scores = self.server_messages['current_score'].copy()
+                    self.server_messages['current_score'] = {}
+                    print('Current score updates >>>')
+                    for symbol in symbol_scores:
+                        summary = symbol_scores[symbol]
+                        max_score = len(summary[-1]) * 6
+                        if self.server_instruction['stdout_detail']:
+                            print('\n' + '='*130)
+                            print(f"\n{summary[0]} monitoring update:")
+                            print(f"Current price: {summary[5]}")   
+                            print(f"Bull score: {summary[1]} out of {max_score}, change score: {summary[3]} out of {max_score}")
+                            print(f"Bear score: {summary[2]} out of {max_score}, change score: {summary[3]} out of {max_score}")
+                            print(f'Signal >>> {summary[4]} <<<')
+                            print(f"Overview:")
+                            print(json.dumps(summary[-1], indent=4))
+                            print('='*130 + '\n')
+                        else:
+                            mood = 'BULL' if summary[1] > summary[2] else 'BEAR'
+                            score = summary[1] if summary[1] > summary[2] else summary[2]
+                            print(f'{summary[0]} price: {summary[5]}, {mood} {score}/{max_score}, change: {summary[3]} signal: {summary[5]}')
+                    print()
+
+                if self.server_messages['current_monitoring']:
+                    self.server_messages['current_monitoring'] = 0
+                    if not self.get_stored_coins() or not self.monitored_coins():
+                        print(f"Server has no stored or monitored coins. Enter command 'monitor' to add new coins.")
+                    else:
+                        print(f"Server has the following coins in the database:")
+                        for coin in self.get_stored_coins():
+                            stored_symbol_timeframes = Coin(coin).get_symbol_timeframes()
+                            for symbol in stored_symbol_timeframes:
+                                print(f'{symbol}: {stored_symbol_timeframes[symbol]}')
+                        
+                        print(f"\nServer is currently monitoring:")
+                        for symbol in self.monitored_coins():
+                            print(f'{symbol}: {self.monitored_coins[symbol]}')
+                    print()
+
+                if self.server_messages['signals']:
+                    signals = self.server_messages['signals'].copy()
+                    for symbol in signals:
+                        signal, timestamp, summary = signals[symbol]
+                        mood = 'BULL' if summary[1] > summary[2] else 'BEAR'
+                        score = summary[1] if summary[1] > summary[2] else summary[2]
+                        max_score = len(summary[-1]) * 6
+                        print('!!!!!!!!!!!! ATTENTION !!!!!!!!!!!!')
+                        print(f'{signal} signal for {symbol} at {timestamp}')
+                        print(f'Price was: {summary[5]}, {mood} score {score}/{max_score}')
+                    print('***To clear these signals, run the command "clear signals"***\n')
+
+                if self.server_messages['lastest_signals']:
+                    latest_signal_stats = self.server_messages['lastest_signals'].copy()
+                    self.server_messages['lastest_signals'] = {}
+                    for symbol in latest_signal_stats:
+                        signal_stats = latest_signal_stats[symbol]
+                        (symbol, signal, mood, score, change_score, max_score, signal_price, tf_scores, alt_action,
+                        max_gain, desired_assest, best_gain_price, current_gain, current_price, delta_time, date) = signal_stats
+                        print(f'\n{"="*25} Signal for {symbol} {"="*25}')
+                        print(f'{signal} signal {delta_time} hours ago at {date}')
+                        print(f'Price was: {signal_price}, {mood} score: {score}/{max_score},'
+                            f'change score: {change_score}/{max_score}, timeframe scores: {", ".join(tf_scores)}')
+                        print(f'Max gain from {alt_action} would be {max_gain:.2f}% of {desired_assest} at ${best_gain_price},'
+                            f'gain now from {alt_action} is {current_gain:.2f}% of {desired_assest} at ${current_price}\n')
+
+                if self.server_messages['retain_score']:
+                    symbol, path = self.server_messages['retain_score']
+                    timeframes = self.monitored_coins[self.find_coin(symbol)]
+                    self.server_messages['retain_score'] = []
+                    print(f'Retain scoring summary for {symbol} with timeframes {timeframes} has completed. File located at: {path}\n')
+
+                if self.server_messages['graph_trend']:
+                    symbol, path = self.server_messages['graph_trend']
+                    timeframes = self.monitored_coins[self.find_coin(symbol)]
+                    self.server_messages['graph_trend'] = []
+                    print(f'Trend graph for {symbol} with timeframes {timeframes} has completed. File located at: {path}\n')
+
+                if self.server_messages['graph_lookahead']:
+                    symbol, path = self.server_messages['graph_lookahead']
+                    timeframes = self.monitored_coins[self.find_coin(symbol)]
+                    self.server_messages['graph_lookahead'] = []
+                    print(f'Look ahead graph for {symbol} with timeframes {timeframes} has completed. File located at: {path}\n')
+                
+                if self.server_messages['graph_PA']:
+                    symbol, path = self.server_messages['graph_PA']
+                    timeframes = self.monitored_coins[self.find_coin(symbol)]
+                    self.server_messages['graph_PA'] = []
+                    print(f'PA and signal graph for {symbol} with timeframes {timeframes} has completed. File located at: {path}\n')
+
+                if self.server_messages['graph_trade_simulation']:
+                    symbol, path = self.server_messages['graph_trade_simulation']
+                    timeframes = self.monitored_coins[self.find_coin(symbol)]
+                    self.server_messages['graph_trade_simulation'] = []
+                    print(f'Trade simulation for {symbol} with timeframes {timeframes} has completed. File located at: {path}\n')
+
+                if self.server_messages['graph_binance_scan']:
+                    pass
+
+                print(f'{"*"*25} END server messages {"*"*25}')
+
+
+    def toggle_stdout(self):
+        '''Toggles server stdout between periodic and prompt only'''
+
+        if self.server_instruction['stdout'] == 1:
+            print('Server stdout has been toggled OFF.')
+            self.server_instruction['stdout'] = 0
+        else:
+            detail = 'HIGH' if self.server_instruction['stdout_detail'] else 'LOW'
+            print(f'Server stdout has been toggled ON. Stdout detail is {detail}.')
+            self.server_instruction['stdout'] = 1
+
+
+    def toggle_stdout_detail(self):
+        '''Toggles detail of server stdout'''
+
+        if self.server_instruction['stdout_detail'] == 1:
+            print('Server stdout detail has been toggled to LOW.')
+            self.server_instruction['stdout_detail'] = 0
+        else:
+            print('Server stdout detail has been toggled to HIGH.')
+            self.server_instruction['stdout_detail'] = 1
 
 
     def request_interval_handler(self):
@@ -523,71 +580,6 @@ class Notification_server():
             self.tickspeed_handler.clear() # Locks server wide event object. 
             time.sleep(self.SERVER_SPEED)
 
-
-    def server_stdout(self):
-        '''Thread handles server stdout (so that thread stdouts don't overlap)'''
-
-        messages = [] # list of score_dict
-        while True:
-            self.tickspeed_handler.wait() # Releases every server tick.
-            if len(self.message_backlog) >= len(self.monitored_coins):
-                messages = self.message_backlog.copy()
-                self.message_backlog = [] # Empty message log.
-                if self.server_instruction['stdout']:
-                    self.server_instruction['score'] = 1 # Note, post can be turned on via user input also. 
-
-            if self.server_instruction['score'] and messages:
-                while True:
-                    if self.server_instruction['pause']:
-                        time.sleep(1)
-                        continue
-                    break
-                print(datetime.now().strftime('%I:%M %p'))
-                for message in messages:
-                    if message[-1] == "coin_score":
-                        summary = message[:-1]
-                        max_score = len(summary[-1]) * 6
-                        if self.server_instruction['stdout_detail']:
-                            print('\n\n' + '='*130)
-                            print(f"\nCoin pair {summary[0]} monitoring update:")
-                            print(f"Current price: {summary[5]}")   
-                            print(f"Bull score: {summary[1]} out of {max_score}, change score: {summary[3]} out of {max_score}")
-                            print(f"Bear score: {summary[2]} out of {max_score}, change score: {summary[3]} out of {max_score}")
-                            print(f'Signal >>> {summary[4]} <<<')
-                            print(f"Overview:")
-                            print(json.dumps(summary[-1], indent=4))
-                        else:
-                            mood = 'BULL' if summary[1] > summary[2] else 'BEAR'
-                            score = summary[1] if summary[1] > summary[2] else summary[2]
-                            print(f'Symbol: {summary[0]}, price: {summary[5]}, {mood} {score}/{max_score}, change: {summary[3]} signal: {summary[5]}')
-                        if self.server_instruction['stdout_detail']:
-                            print('='*130 + '\n\n')
-                self.server_instruction['score'] = 0
-                print()
-
-
-    def toggle_stdout(self):
-        '''Toggles server stdout between periodic and prompt only'''
-
-        if self.server_instruction['stdout'] == 1:
-            print('Server stdout has been toggled OFF.')
-            self.server_instruction['stdout'] = 0
-        else:
-            detail = 'HIGH' if self.server_instruction['stdout_detail'] else 'LOW'
-            print(f'Server stdout has been toggled ON. Stdout detail is {detail}.')
-            self.server_instruction['stdout'] = 1
-
-
-    def toggle_stdout_detail(self):
-        '''Toggles detail of server stdout'''
-
-        if self.server_instruction['stdout_detail'] == 1:
-            print('Server stdout detail has been toggled to LOW.')
-            self.server_instruction['stdout_detail'] = 0
-        else:
-            print('Server stdout detail has been toggled to HIGH.')
-            self.server_instruction['stdout_detail'] = 1
-
     
     def update_timers(self, timer):
         '''Handles updating server clocks'''
@@ -598,9 +590,9 @@ class Notification_server():
         elif timer == 'server_speed':
             words.extend([' (second)', 'tick speed'])
 
-        self.server_instruction['pause'] = 1
+        self.server_instruction['pause_stdout'] = 1
         user_input = input(f"Please input a positive integer{words[0]} for new server {words[1]}: ")
-        self.server_instruction['pause'] = 0
+        self.server_instruction['pause_stdout'] = 0
         try:
             user_input = int(user_input)
             if user_input > 0:
@@ -630,14 +622,13 @@ class Notification_server():
         '''Handles user input for specifying multiple new coins, trading pairs or timeframes to monitor by the server'''
 
         input_coin_dict = {}
-
-        self.server_instruction['pause'] = 1 # Stops all server stdout for cleaner user interaction.
-        self.current_monitoring()
-        self.current_monitoring(stored=True)
+        self.server_instruction['pause_stdout'] = 1 # Stops all server stdout for cleaner user interaction.
         print('='*10 + 'INSTRUCTIONS' + '='*10)
         print('>>> If multiple, seperate by spaces')
         print('>>> Enter coin(s) to monitor, choose their respective tradingpair(s) and Optionally list their timeframe(s)')
         print(f">>> If no tradingpairs are entered, deafult timeframes will be used: {DEFAULT_TIMEFRAMES}")
+
+        # `ETH INJBTC ETHUSDT_4h BNB XRPBTC_3d XRPUSDT`
            
         while True:
             coins = str(input('Input coins: ')).upper() # TODO Make this also handle mail requests 
@@ -667,9 +658,8 @@ class Notification_server():
             for tradingpair in input_coin_dict[coin]:
                 symbol = coin + tradingpair
                 try:
-                    for symbol_timeframe in self.monitored_coins[coin]:
-                        if symbol == symbol_timeframe.split('_')[0]:
-                            input_coin_dict[coin][tradingpair].append(symbol_timeframe.split('_')[1]) # Add all monitored timeframes for a given tradingpair.
+                    if symbol in self.monitored_coins[coin]:
+                        input_coin_dict[coin][tradingpair].extend(self.monitored_coins[coin][symbol]) # Add all monitored timeframes for a given tradingpair.
                 except KeyError:
                     pass # Means server is not monitoring coin.
 
@@ -695,7 +685,7 @@ class Notification_server():
                         continue
                     input_coin_dict[coin][tradingpair].extend(timeframes.split(' ')) # Add any additional timeframes on top of current ones. 
                     break
-        self.server_instruction['pause'] = 0 # Unpause server stdout.
+        self.server_instruction['pause_stdout'] = 0 # Unpause server stdout.
         added_coins = self.add_to_monitoring(to_monitor=input_coin_dict) # Verify all user entries and add them to monitoring.
         Thread(target=self.add_new_coins, args=(added_coins,), daemon=True).start() # Input all successful entries.
 
@@ -712,87 +702,35 @@ class Notification_server():
     def input_drop_coin(self):
         '''Handles user input for dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested'''
 
-        input_coin_dict = {}
-        to_drop = set()
-        
-        self.server_instruction['pause'] = 1 # Stops all server stdout for cleaner user interaction.
-        self.current_monitoring()
-        self.current_monitoring(stored=True)
-        print('Enter a coins, coins/tradingpairs, or coins/tradingpairs/timeframes to drop in the list above, appending "-drop"s')
-        print('='*10 + 'INSTRUCTIONS' + '='*10)
-        print('>>> If multiple, seperate by spaces')
-        print('>>> To drop all related pairs of a given entry, append "-drop" (e.g. INJ-drop drops all INJ pairs, INJBTC-drop drops all INJBTC pairs)')
-        print('>>> To drop given entry from server database aswell, append "1" to "-drop" (e.g. INJ-drop1, INJBTC-drop1, RVNUSDT_6h1)')
-        while True:
-            coins = str(input('Input coins: ')).upper()
-            if len(coins) == 0:
-                continue
-            if self.re_search(coins):
-                continue
-            break
-        for coin in coins.split(' '):
-            if coin == '':
-                continue
-            input_coin_dict[coin] = [] # List for tradingpairs.
+        self.server_messages['current_monitoring'] = 1
+        print(f'\n{"="*10}INSTRUCTIONS{"="*10}')
+        print('List coins, symbols or symbol_timeframes to stop monitoring. Append `-drop` to remove those from the database.')
+        print('Entering a coin will drop all related symbols.')
+        print('Entering a symbol drops all related symbol_timeframes.')
+        print('Entering a symbol_timeframe drops only that symbol_timeframe.')
+        print('Example: `RVN INJBTC ETHUSDT_4h DOGE-drop XRPBTC_3d-drop`')
+        print('Seperate entries by space.\n')
+        self.server_instruction['pause_stdout'] = 1 # Stops all server stdout for cleaner user interaction.
 
-        for coin in input_coin_dict:
-            if '-DROP' in coin:
-                to_drop.add(coin)
-                continue # Skip rest of user input interaction. 
-            while True:
-                tradingpairs = str(input(f"Input {coin} trading pairs: ")).upper() 
-                if self.re_search(tradingpairs):
-                    continue
-                tradingpairs = tradingpairs.split(' ')
-                for tradingpair in tradingpairs:
-                    if tradingpair == '':
-                        continue
-                    if '-DROP' in tradingpair:
-                        to_drop.add(coin + '_' + tradingpair)
-                        continue # Skip rest of user input interaction. 
-                    input_coin_dict[coin].append(tradingpair) 
-                break
-
-            for tradingpair in input_coin_dict[coin]:
-                while True:
-                    timeframes = str(input(f"Input {coin + tradingpair} timeframes: "))
-                    if self.re_search(timeframes):
-                        continue
-                    if not re.search('[^ ]', timeframes):
-                        to_drop.add(coin + '_' + tradingpair) # This means the user just entered a white space.
-                    for timeframe in timeframes.split(' '):
-                        timeframe = timeframe.replace('-drop', '') # Incase user appended -drop, which is not needed.
-                        if timeframe == '' or len(timeframe) > 4 or timeframe[-1] in '023456789':
-                            continue # Remove impossible entries immediately.
-                        if timeframe == '1m':
-                            timeframe = '1M' # 1M month is the only timeframe with uppercase. 1m is for 1 minute however that should never be used. 
-                        to_drop.add(coin + '_' + tradingpair + '_@' + timeframe)  
-                    break
+        to_drop = set(input('To drop >>> ').upper().split())
+        self.server_instruction['pause_stdout'] = 0 # Unpause server stdout.
         Thread(target=self.drop_coins, args=(to_drop,), daemon=True).start()
-        self.server_instruction['pause'] = 0 # Unpause server stdout.
+
 
     def drop_coins(self, to_drop):
         '''Handles removing given coin/tradingpair/timeframe from Server monitoring or database'''
 
         Thread(target=self.boost_speed, args=(0.5,), daemon=True).start() # Temporarily boost server speed for faster processing. 
         print(f'to_drop is: {to_drop}')
-        for item in to_drop:
-            item = item.replace('-DROP', '')
-            item = item.split('_')
-            if len(item) == 1:
-                self.server_instruction['drop'] = '1' + item[0]
-                while self.server_instruction['drop']:
-                    self.tickspeed_handler.wait()
-            elif len(item) == 2:
-                self.server_instruction['drop'] = '2' + item[0] + item[1]
-                print(f'to dorp is: {self.server_instruction["drop"]}')
-                while self.server_instruction['drop']:
-                    self.tickspeed_handler.wait()
-            else:
-                self.server_instruction['drop'] = '3' + item[0] + item[1] + item[2].replace('@', '_')
-                while self.server_instruction['drop']:
-                    self.tickspeed_handler.wait()
+        self.server_messages['removed_items'] = {'to_drop':to_drop.copy(), 'to_drop_copy':to_drop.copy(), 'complete':0}
+        for query in to_drop:
+            drop_from_db = True if '-DROP' in query == 1 else False
+            query = query.replace('-DROP', '')
+            self.server_instruction['drop'] = {'to_drop':query, 'db_drop':drop_from_db}
+            while self.server_instruction['to_drop']:
+                self.tickspeed_handler.wait()
         self.server_instruction['boost'] = 0 # Turn off boost thread.
+        self.server_messages['removed_items']['complete'] = 1
 
  
     @staticmethod
@@ -942,7 +880,7 @@ class Notification_server():
         '''Handles postfix initiation and SMTP communication with user gmail'''
 
         if not self.postfix_init:
-            self.server_instruction['pause'] = 1 # Stops all server stdout for cleaner user interaction.
+            self.server_instruction['pause_stdout'] = 1 # Stops all server stdout for cleaner user interaction.
             notification_init_process = subprocess.run(['sudo', self.script_path + '/notification_init.sh'])
             if notification_init_process.returncode == 0:
                 postfix_init_process = subprocess.run(['sudo', self.script_path + '/postfix_init.sh'])
@@ -965,7 +903,7 @@ class Notification_server():
                     elif postfix_init_process.returncode == 2:
                         postfix_init_process = subprocess.run(['sudo', self.script_path + '/postfix_init.sh'])
                     time.sleep(0.5)
-                self.server_instruction['pause'] = 0 # Unpause server stdout.
+                self.server_instruction['pause_stdout'] = 0 # Unpause server stdout.
                 return
             print("Server notification service will NOT commence until this issue is resolved.")
 

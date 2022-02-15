@@ -192,6 +192,7 @@ class Coin():
         symbol_timeframes_dict = {}
         for symbol in stored_symbols:
             stored_timeframes = [f.split('/')[-1].split('_')[-1].split('.')[0] for f in glob(f'{self.candlestick_path}/{symbol}/*')]
+            stored_timeframes.sort(key=lambda tf : INTERVALS.index(tf))
             symbol_timeframes_dict[symbol] = stored_timeframes
             symbol_timeframes_list.extend([f'{symbol}_{tf}' for tf in stored_timeframes])
 
@@ -207,9 +208,6 @@ class Coin():
         datafile = self.get_candlestick_path(symbol, timeframe)
         if os.path.exists(datafile):
             os.remove(datafile)
-            print(f"{symbol_timeframe} has been removed.")
-        else:
-            print(f"{symbol_timeframe} is already not present in database.")
 
 
     def remove_symbol(self, symbol):
@@ -219,7 +217,6 @@ class Coin():
 
         stored_symbol_timeframes = self.get_symbol_timeframes()
         if symbol not in stored_symbol_timeframes:
-            print(f'The symbol: {symbol} is not present in the database.')
             return 1
        
         for base_path in glob(f'{self.coin_path}/*'):
@@ -232,7 +229,6 @@ class Coin():
                 os.rmdir(f'{self.graph_path}/{symbol}')
             else:
                 os.rmdir(f'{base_path}/{symbol}')
-        print(f"All files assoicated with {symbol} have been removed.")
         if not self.get_symbol_timeframes():
             self.remove_coin() # When no more symbols remaining, remove coin folder
         return 0
@@ -247,7 +243,6 @@ class Coin():
         for symbol in stored_symbol_timeframes:
             self.remove_symbol(symbol)
         os.rmdir(self.coin_path)
-        print(f"All assoicated files for {self.coin} have been removed.")
 
 
     def create_tradingpair_folders(self, symbol):
@@ -350,11 +345,8 @@ class Coin():
         Updates all csv and json files of given coin.
         '''
  
-        if self.synchronize_score_jsons():
-            need_update = True
-
         # More expensive update, only perform at most every hour or when need update.
-        if need_update or self.previous_update_UTS == None or (time() - self.previous_update_UTS >= 3600):
+        if self.synchronize_score_jsons() or not self.previous_update_UTS or (time() - self.previous_update_UTS >= 3600):
             symbol_timeframes = self.get_symbol_timeframes()
             for symbol in symbol_timeframes:
                 tradingpair = symbol.split(self.coin)[-1]
@@ -435,15 +427,15 @@ class Coin():
             else:
                 score_dict[timeframe][metric] = 'AVERAGE'
 
-        signal = '___'
+        signal = ''
         if bull_score >= bull_threshold and bear_score >= bear_threshold:
-            signal = '___'
+            signal = ''
         elif bull_score >= bull_threshold and bull_score > bear_score:
             signal = 'SELL'
         elif bear_score >= bear_threshold and bear_score > bull_score:
             signal = 'BUY'
 
-        return [symbol, bull_score, bear_score, change_score, signal, latest_price, score_dict, "coin_score"]
+        return [symbol, bull_score, bear_score, change_score, signal, latest_price, score_dict]
 
     
     def compute_historical_score(self, symbol, custom_timeframes):
@@ -600,7 +592,7 @@ class Coin():
             json.dump(historical_percent_changes, jf, indent=4) 
 
 
-    def generate_look_ahead_gains(self, symbol, custom_timeframes, peak_start_only=False, threshold=0.5):
+    def generate_look_ahead_gains(self, symbol, custom_timeframes, custom_threshold=None):
         '''
         Searches through specificed historical_scoring csv to find bull/bear score peaks over a certain thresold.
         Once found, it calculates the % difference of if you sold/bought after 30min, 1h, 4h, 1d, 3d, 1w, 2w.
@@ -608,11 +600,16 @@ class Coin():
         '''
 
         print('computing look ahead gains...')
-        self.compute_historical_score(symbol, custom_timeframes)
-        threshold_score = int(threshold * (len(custom_timeframes) * 6)) if custom_timeframes else int(threshold * (len(self.deafult_scoring_timeframes) * 6))
+        threshold_strat = ''
+        if custom_threshold:
+            threshold_strat = custom_threshold
+            self.compute_historical_score(symbol, timeframes)
+        else:
+            threshold_strat = self.optimise_signal_threshold(symbol, timeframes)
+        bull_threshold, bear_threshold = [int(threshold.split(':')[-1]) for threshold in threshold_strat.split('|')]
+
         filename_ext = get_filename_extension(custom_timeframes)
         historical_score_path = f"{self.historical_scoring_path}/{symbol}/historical_scoring_{symbol}_{filename_ext}.csv"
-        filename_ext += '_peakstart' if peak_start_only else '_peaktop'
         look_ahead_gains_csv = f"{self.look_ahead_path}/{symbol}/look_ahead_gains_{symbol}_{filename_ext}.csv"
         historical_scoring_DF = pd.read_csv(historical_score_path, index_col= 0, header=None, skiprows=1)
 
@@ -621,74 +618,70 @@ class Coin():
             skip_UTS = historical_scoring_DF.index[0]
             if (outfile.tell() == 0):
                 timeframes = custom_timeframes if custom_timeframes else self.deafult_scoring_timeframes
-                retain_csv_writer.writerow(["UTC", "price", "peak_start", "peak_top", "change_score", "goal",
-                                            "%diff_30min", "%diff_1h", "%diff_4h", "%diff_12h", "%diff_1d", "%diff_3d", "%diff_1w", "%diff_2w", *timeframes, "UTS"])
+                retain_csv_writer.writerow(["UTC", "price", "peak_start", "change_score", "goal",
+                                            "%diff_30min", "%diff_1h", "%diff_4h", "%diff_12h", "%diff_1d",
+                                            "%diff_3d", "%diff_1w", "%diff_2w", *timeframes, "UTS"])
             else:
                 infile.seek(outfile.tell() - 15) # skip to end of file, capture last UTS
                 skip_UTS = infile.readline()
 
             peak_start = 0
-            peak = 0
-            peak_row = ()
-            look_ahead = 12 # 12 iteration, where each iteration is 5min, so 1 hour look ahead
-            best_prices = {6:0, 12:0, 48:0, 144:0, 288:0, 864:0, 2016:0, 4032:0} # key: look ahead time in 5min intervals, value: percentage diff
+            peak_row = []
+            best_prices = {6:0, 12:0, 48:0, 144:0, 288:0, 864:0, 2016:0, 4032:0} # number of 5min look ahead intervals
+            uts_5min = 300000
 
             for row in historical_scoring_DF.loc[skip_UTS:].itertuples(name=None):
-                score = int((max(row[2:4])))
+                bull_score, bear_score = row[2:4]
                 if peak_start:
-                    if not peak_start_only and score > peak:
-                        peak, peak_row = score, row
-                        look_ahead = 12
-                    else:
-                        look_ahead -= 1
-                        if not look_ahead or (peak_start_only and peak_start > score): 
-                            # Due to Binance exchange updates, some rows are missing, hence DF is sliced with safe buffer of 4500 5 min intervals rather than 4032
-                            look_ahead_DF = historical_scoring_DF.loc[peak_row[0]:(peak_row[0] + 300000*4500)]
-                            if (look_ahead_DF.shape[0] < 4032):
-                                break # Less than 2 weeks of look ahead data avaliable, so end process
+                    # Binance exchange updates causes missing rows, hence DF is sliced with safe buffer of 4500 5 min intervals rather than 4032
+                    look_ahead_DF = historical_scoring_DF.loc[peak_row[0]:(peak_row[0] + uts_5min*4500)]
+                    if (look_ahead_DF.shape[0] < 4032):
+                        break # Less than 2 weeks of look ahead data avaliable, so end process
 
-                            best_price = float(peak_row[1])
-                            goal = "buy_back" if peak_row[2] > peak_row[3] else "sell_later"
-                            for row_look_ahead in look_ahead_DF.itertuples(name=None):
-                                look_ahead += 1
-                                look_ahead_price = float(row_look_ahead[1])
-                                
-                                if (goal == "buy_back"): # where score was bull/max, hence you want to look ahead for lower prices, since you ideally sold
-                                    if look_ahead_price < best_price:
-                                        best_price = look_ahead_price
-                                else:
-                                    if look_ahead_price > best_price:
-                                        best_price = look_ahead_price
+                    best_price = float(peak_row[1])
+                    goal = "buy_back" if peak_row[2] > peak_row[3] else "sell_later"
+                    for row_look_ahead in look_ahead_DF.itertuples(name=None):
+                        look_ahead += 1
+                        look_ahead_price = float(row_look_ahead[1])
+                        
+                        if (goal == "buy_back"): # where score was bull/max, hence you want to look ahead for lower prices, since you ideally sold
+                            if look_ahead_price < best_price:
+                                best_price = look_ahead_price
+                        else:
+                            if look_ahead_price > best_price:
+                                best_price = look_ahead_price
 
-                                if look_ahead in best_prices:
-                                    best_prices[look_ahead] = int((best_price / peak_row[1]) * 100)
-                                    best_price = look_ahead_price
-                                    if look_ahead == 4032:
-                                        break
-                            tf_start = 6 if goal == 'buy_back' else 5
-                            tf_scores = [peak_row[i] for i in range(tf_start, len(peak_row) - 1, 2)]
-                            utc_time = datetime.utcfromtimestamp(int(str(peak_row[0])[:-3])).strftime('|%d-%m-%Y %H:%M:%S|')
-                            retain_csv_writer.writerow([
-                                utc_time, peak_row[1], peak_start, peak, peak_row[4], goal,
-                                *[diff for diff in best_prices.values()], *tf_scores, peak_row[0]
-                            ])
-                            look_ahead = 12
-                            peak_start, peak = 0, 0
-        
-                elif score >= threshold_score:
-                    peak_start, peak, peak_row = score, score, row
-                    if peak_start_only:
-                        look_ahead = 0
+                        if look_ahead in best_prices:
+                            best_prices[look_ahead] = int((best_price / peak_row[1]) * 100)
+                            best_price = look_ahead_price
+                            if look_ahead == 4032:
+                                break
+                    tf_start = 6 if goal == 'buy_back' else 5
+                    tf_scores = [peak_row[i] for i in range(tf_start, len(peak_row) - 1, 2)]
+                    utc_time = datetime.utcfromtimestamp(int(str(peak_row[0])[:-3])).strftime('|%d-%m-%Y %H:%M:%S|')
+                    retain_csv_writer.writerow([
+                        utc_time, peak_row[1], peak_start, peak_row[4], goal,
+                        *[diff for diff in best_prices.values()], *tf_scores, peak_row[0]
+                    ])
+                    look_ahead = 12
+                    peak_start = 0
+
+                if bull_score >= bull_threshold and bear_score >= bear_threshold:
+                    continue
+                elif bull_score >= bull_threshold and bull_score > bear_score:
+                    peak_start, peak_row = bull_score, row
+                elif bear_score >= bear_threshold and bear_score > bull_score:
+                    peak_start, peak_row = bear_score, row
+        return look_ahead_gains_csv
 
 
-    def generate_retain_score(self, symbol, custom_timeframes, peak_start_only=False):
+    def generate_retain_score(self, symbol, custom_timeframes):
         '''
         Creates a score file summarising the data in look_ahead_gains.csv for given symbol
         '''
 
         print('computing retain score...')
         filename_ext = get_filename_extension(custom_timeframes)
-        filename_ext += '_peakstart' if peak_start_only else '_peaktop'
         retain_score_csv = f"{self.retain_scoring_path}/{symbol}/retain_scoring_{symbol}_{filename_ext}.csv"
         look_ahead_gains_csv = f"{self.look_ahead_path}/{symbol}/look_ahead_gains_{symbol}_{filename_ext}.csv"
         self.generate_look_ahead_gains(symbol, custom_timeframes)
@@ -702,14 +695,14 @@ class Coin():
             lookahead_csv_reader = csv.reader(infile)
             next(lookahead_csv_reader)
             for row in lookahead_csv_reader:
-                index = 6
-                if row[5] == "buy_back":
-                    bullscore_bestgain[int(row[3])].append(min([int(i) for i in row[6:14]]))
+                index = 5
+                if row[4] == "buy_back":
+                    bullscore_bestgain[int(row[2])].append(min([int(i) for i in row[5:13]]))
                     for look_ahead in average_bestgain["buy_back"]:
                         average_bestgain["buy_back"][look_ahead].append(int(row[index]))
                         index += 1
                 else:
-                    bearscore_bestgain[int(row[3])].append(max([int(i) for i in row[6:14]]))
+                    bearscore_bestgain[int(row[2])].append(max([int(i) for i in row[5:13]]))
                     for look_ahead in average_bestgain["sell_later"]:
                         average_bestgain["sell_later"][look_ahead].append(int(row[index]))
                         index += 1
@@ -732,6 +725,8 @@ class Coin():
 
 
     def simulate_trading(self, symbol, custom_timeframes, single_threshold='', single_metric='overall'):
+        # TODO investigate why peak top strat didn't work, perhaps use PA graph to help
+        # if you work it out, then implment peak_top options for the other methods - but for now, it's pointless
 
         filename_ext = get_filename_extension(custom_timeframes)
         historical_score_path = f'{self.historical_scoring_path}/{symbol}/historical_scoring_{symbol}_{filename_ext}.csv'
@@ -904,6 +899,7 @@ class Coin():
         If the metric function parameter is set to 'max' then the rank 1 best max threshold will be returned
         '''
 
+        # TODO definetly use threading
         filename_ext = get_filename_extension(custom_timeframes)
         self.simulate_trading(symbol, custom_timeframes)
         with open(f'{self.trading_simulation_path}/{symbol}/trade_simulation_{symbol}_{filename_ext}.csv', 'r') as f:
@@ -917,15 +913,16 @@ class Coin():
                 return best_max_gains_strat # Best max gain strat
 
 
-    def graph_look_ahead_data(self, symbol, custom_timeframes, graph_type="bar", peak_start_only=False):
+    def graph_look_ahead_data(self, symbol, custom_timeframes, graph_type="bar"):
         '''
         Generates either a bar graph or line graph summarising the potential gains from buying/selling at the given score peaks.
         using from looking ahead data
         '''
 
+        #TODO remove line graph option
+
         print('computing graph...')
         filename_ext = get_filename_extension(custom_timeframes)
-        filename_ext += '_peakstart' if peak_start_only else '_peaktop'
         look_ahead_gains_csv = f"{self.look_ahead_path}/{symbol}/look_ahead_gains_{symbol}_{filename_ext}.csv"
         filename_ext += '' if graph_type == 'bar' else '_line'
         self.generate_look_ahead_gains(symbol, custom_timeframes)
@@ -937,14 +934,14 @@ class Coin():
             lookahead_csv_reader = csv.reader(infile)		
             next(lookahead_csv_reader)
             for row in lookahead_csv_reader:
-                index = 6
-                if row[5] == "buy_back":
-                    for look_ahead in best_gains["buy_back"][int(row[3])]:
-                        best_gains["buy_back"][int(row[3])][look_ahead].append(int(row[index]))
+                index = 5
+                if row[4] == "buy_back":
+                    for look_ahead in best_gains["buy_back"][int(row[2])]:
+                        best_gains["buy_back"][int(row[2])][look_ahead].append(int(row[index]))
                         index += 1
                 else:
-                    for look_ahead in best_gains["sell_later"][int(row[3])]:
-                        best_gains["sell_later"][int(row[3])][look_ahead].append(int(row[index]))
+                    for look_ahead in best_gains["sell_later"][int(row[2])]:
+                        best_gains["sell_later"][int(row[2])][look_ahead].append(int(row[index]))
                         index += 1
 
         fig, (ax_bull, ax_bear) = plt.subplots(nrows= 2, ncols= 1, figsize=(20, 16))
@@ -1148,7 +1145,7 @@ class Coin():
         plt.savefig(f"{self.graph_path}/trading_simulation/{symbol}/trade_simulation_{symbol}_{filename_ext}.png")
 
 
-    def graph_signal_against_pa(self, symbol, custom_timeframes):
+    def graph_signal_against_pa(self, symbol, custom_timeframes, custom_threshold=None, interval='1d'):
         ''''''
         # map signals against real candle PA, however also map a little mark for each max gain after signal before the next signal
         # signals will be background vertical lines, max gains can just be a tiny red dotted line or something
@@ -1160,7 +1157,7 @@ class Coin():
         pass
 
 
-    def get_trend_against_pa(self, symbol, interval, custom_timeframes, custom_threshold=None):
+    def graph_trend(self, symbol, custom_timeframes, custom_threshold=None, interval='1d'):
         pass # TODO make a get_trends_graph, uses candle stick graph of PA, with score as line graph behind it
 
 
@@ -1168,6 +1165,7 @@ class Coin():
         '''
         returns a list of entries from the historical scoring data, and will show signals if they crossed given threshold
         '''
+        #TODO deprecate, make get_trend_graph instead
 
         filename_ext = get_filename_extension(custom_timeframes)
         threshold_strat = ''
@@ -1215,24 +1213,22 @@ class Coin():
         return trend_stdout
 
     
-    def get_latest_signal_stats(self, symbol, custom_timeframes=[], custom_threshold=None):
+    def get_latest_signal_stats(self, symbol, timeframes, custom_threshold=None):
         
-        filename_ext = get_filename_extension(custom_timeframes)
+        filename_ext = get_filename_extension(timeframes)
         threshold_strat = ''
-        timeframes = custom_timeframes if custom_timeframes else self.deafult_scoring_timeframes
         if custom_threshold:
             threshold_strat = custom_threshold
             self.compute_historical_score(symbol, timeframes)
         else:
             threshold_strat = self.optimise_signal_threshold(symbol, timeframes)
+        bull_threshold, bear_threshold = [int(threshold.split(':')[-1]) for threshold in threshold_strat.split('|')]
 
         with open(f'{self.historical_scoring_path}/{symbol}/historical_scoring_{symbol}_{filename_ext}.csv') as f:
             f.seek(0, os.SEEK_END) # move to eof
             eof = f.tell()
             blocksize = 25000
             next_block = eof - blocksize
-
-            bull_threshold, bear_threshold = [int(threshold.split(':')[-1]) for threshold in threshold_strat.split('|')]
             max_score = int((len(timeframes))*6)
             peak_price = 0
             best_price = [float('inf'), 0] # min, max
@@ -1256,6 +1252,8 @@ class Coin():
                     if signal:
                         peak_price = float(row[1])
                         alt_action = 'BUY' if signal == 'SELL' else 'SELL'
+                        mood = 'BULL' if signal == 'SELL' else 'BEAR'
+                        score = bull_score if signal == 'SELL' else bear_score
                         desired_assest = self.coin if signal == 'SELL' else symbol.split(self.coin)[-1]
                         max_gain = (peak_price / best_price[0])*100 - 100 if signal == 'SELL' else (best_price[1] / peak_price)*100 - 100
                         best_gain_price = best_price[0] if signal == 'SELL' else best_price[1]
@@ -1263,16 +1261,14 @@ class Coin():
                         tf_indexs = list(range(5, len(row) - 1 ,2)) if signal == 'BUY' else list(range(6, len(row) - 1 ,2))
                         tf_scores = [f'{timeframes[i]}: {score}' for i, score in enumerate([row[i] for i in tf_indexs])]
                         uts = int(row[0][:-3])
-                        delta = int((datetime.now() - datetime.fromtimestamp(uts)).total_seconds() // 3600)
+                        delta_time = int((datetime.now() - datetime.fromtimestamp(uts)).total_seconds() // 3600)
                         date = datetime.fromtimestamp(uts).strftime('%d/%m/%y %a %I:%M %p')
-                        print(f'\n===================================== Signals for {symbol} =====================================')
-                        print(f'{signal} signal {delta} hours ago at {date}')
-                        print(f'Price was: {row[1]}, score: {bull_score if signal == "SELL" else bear_score}/{max_score},\
-                            change score: {row[4]}/{max_score}, timeframe scores: {", ".join(tf_scores)}')
-                        print(f'Max gain from {alt_action} would be {max_gain:.2f}% of {desired_assest} at ${best_gain_price},\
-                            gain now from {alt_action} is {current_gain:.2f}% of {desired_assest} at ${latest_row[1]}\n')
-                        next_block = -1000
-                        break
+                        change_score = row[5]
+                        signal_price = row[1]
+                        current_price = latest_row[1]
+
+                        return [symbol, signal, mood, score, change_score, max_score, signal_price, tf_scores, alt_action, 
+                            max_gain, desired_assest, best_gain_price, current_gain, current_price, delta_time, date]
 
     
     @staticmethod
