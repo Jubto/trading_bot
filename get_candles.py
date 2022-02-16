@@ -101,7 +101,7 @@ class Coin():
                     print(f"Binance API exception, the coin {self.coin} does not have a trading pair {tradingpair.upper()}.")
                 except BinanceAPIException:
                     print(f"Binance API exception, the coin {self.coin} is not listed on Binance.")
-                    self.remove_coin() # symbol does not exist in Binance.
+                    self.remove_coin() # remove all trace of invalid coin from db
                 return 0
         return 1
 
@@ -340,7 +340,7 @@ class Coin():
                 json.dump(scoring_json, jf, indent=4)
 
 
-    def update_database(self, need_update=False): # TODO make private
+    def update_database(self): # TODO make private
         '''
         Updates all csv and json files of given coin.
         '''
