@@ -80,7 +80,8 @@ class Coin():
         If coin has no stored data (i.e. new coin for server) then this will retreve all historical data
         If coin has data stored, then this will retreve only the latest candle data. 	
         '''
-
+        print(f'get_candle COIN: {self.coin} got: {tradingpair} | {timeframes}')
+        return
         symbol = self.coin.upper() + tradingpair.upper()
         for timeframe in timeframes:
             candlestick_path = self.get_candlestick_path(symbol, timeframe)

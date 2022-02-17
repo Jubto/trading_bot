@@ -57,7 +57,7 @@ class Notification_server():
         self.monitored_coins = {} # Coins server is currently monitoring {coin: symbol: [timeframe, timeframe...], coin2: symbol1: [...]}
         self.coin_objs = {} # E.g. {'btc': btc_obj, 'rvn': rvn_obj}
         self.server_instruction = {
-            'drop': {'to_drop':''},
+            'to_drop': {'item':''},
             "stdout": 0,
             'stdout_detail': 0,
             'request_interval': [],
@@ -129,7 +129,9 @@ class Notification_server():
 
 
     def server_user_stdinput(self): # TODO private 
-        '''Thread handles user inputs'''
+        '''
+            Thread handles user inputs
+        '''
 
         while True:
             user_input = input().strip().lower()
@@ -160,11 +162,11 @@ class Notification_server():
             elif user_input == 'monitoring':
                 self.server_messages['current_monitoring'] = 1
             elif user_input == 'monitor':
-                self.input_monitor_new()
+                self.monitor_new_coin()
             elif user_input == 'all':
                 self.monitor_all_coins()
             elif user_input == 'drop':
-                self.input_drop_coin()
+                self.drop_coins()
             elif user_input == 'notify':
                 self.notification_init()
             elif user_input == 'debug':
@@ -177,35 +179,141 @@ class Notification_server():
                 print(f"Enter 'commands' to view all avaliable commands.")
 
 
+    def monitor_all_coins(self, to_monitor=[]):
+        '''
+            Hanndles the server coin monitoring initiation
+        '''
+
+        if not to_monitor:
+            to_monitor = self.get_stored_coins()
+            if not to_monitor: # no coins in db
+                self.monitor_new_coin() # prompt user to enter coin.
+        self.server_messages['new_monitorings'] = {
+            'added':set(),
+            'invalid_syntax':set(),
+            'invalid_timeframe':set(),
+            'binance_exceptions':set(),
+            'completed':0
+        }
+        print(f'monitor_all_coins output: {to_monitor}')
+        Thread(target=self.add_to_monitoring, args=(to_monitor,), daemon=True).start()
+        # self.create_coin_threads(self.add_to_monitoring(to_monitor)) # verify input and make new coin threads
+        # self.create_coin_threads(Thread(target=self.add_to_monitoring, args=(to_monitor,), daemon=True).start())
+
+
+    def monitor_new_coin(self):
+        '''
+            Handles user input for specifying multiple new coins, trading pairs or timeframes to monitor by the server
+        '''
+
+        self.server_messages['current_monitoring'] = 1
+        print(f'\n{"="*10}INSTRUCTIONS{"="*10}')
+        print('List coins, symbols or symbol_timeframes which you want to start monitoring.')
+        print('If said coin or symbol is already present in the database, all their their timeframes will be monitored.')
+        print(f'If the coin or symbol is not present in the database, they will be monitored with standard timeframes {DEFAULT_TIMEFRAMES} USDT pair.')
+        print('Or you can specify a list of timeframes to monitor, use [] like `BTCUSDT[1h,4h,12h,1w,1M]`, use no spaces inbetween.')
+        print('Or to specify single timeframes to monitor, use `ETHBTC_1d`')
+        print('Example: `RVN INJBTC ETHUSDT_4h DOGE XRPBTC_3d DOTUSDT[30m,1h,4h,1w]`')
+        print('Seperate entries by space.\n')
+        self.server_instruction['pause_stdout'] = 1 # Stops all server stdout for cleaner user interaction.
+
+        to_monitor = set(input('To monitor >>> ').split())
+        self.server_messages['new_monitorings'] = {
+            'added':set(),
+            'invalid_syntax':set(),
+            'invalid_timeframe':set(),
+            'binance_exceptions':set(),
+            'completed':0
+        }
+        self.server_instruction['pause_stdout'] = 0 # Unpause server stdout.
+        # self.create_coin_threads(self.add_to_monitoring(to_monitor)) # verify input and make new coin threads
+        Thread(target=self.add_to_monitoring, args=(to_monitor,), daemon=True).start()
+        # self.create_coin_threads(Thread(target=self.add_to_monitoring, args=(to_monitor,), daemon=True).start()) # verify input and make new coin threads
+
+
+    def create_coin_threads(self, added_coins):
+        '''
+            Handles creating new coin threads if they are currently not being monitored by server
+        '''
+
+        print(f'added coins were: {added_coins}')
+        for coin in added_coins:
+            if not [thread for thread in list_threads() if str(thread).split(',')[0].split('(')[1] == coin]:
+                # Means server is not currently monitoring this coin, so start new thread. 
+                Thread(target=self.monitored_coin, name=coin, args=(coin,), daemon=True).start()
+
+
+    def drop_coins(self):
+        '''
+            Handles user input for dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested
+        '''
+
+        self.server_messages['current_monitoring'] = 1
+        print(f'\n{"="*10}INSTRUCTIONS{"="*10}')
+        print('List coins, symbols or symbol_timeframes to stop monitoring. Append `-drop` to remove those from the database.')
+        print('Entering a coin will drop all related symbols.')
+        print('Entering a symbol drops all related symbol_timeframes.')
+        print('Entering a symbol_timeframe drops only that symbol_timeframe.')
+        print('Example: `RVN INJBTC ETHUSDT_4h DOGE-drop XRPBTC_3d-drop`')
+        print('Seperate entries by space.\n')
+        self.server_instruction['pause_stdout'] = 1 # Stops all server stdout for cleaner user interaction.
+
+        to_drop = set(input('To drop >>> ').split())
+        self.server_instruction['pause_stdout'] = 0 # Unpause server stdout.
+        Thread(target=self.handle_coin_drop, args=(to_drop,), daemon=True).start()
+
+
+    def handle_coin_drop(self, to_drop):
+        '''
+            Handles removing given coin/tradingpair/timeframe from Server monitoring or database
+        '''
+
+        Thread(target=self.boost_speed, args=(0.5,), daemon=True).start() # Temporarily boost server speed for faster processing. 
+        print(f'to_drop is: {to_drop}')
+
+        # self.server_messages['removed_items'] = {'to_drop':to_drop.copy(), 'initial_queries':to_drop.copy(), 'completed':0}
+        self.server_messages['removed_items'] = {'dropped':set(), 'initial_queries':to_drop.copy(), 'completed':0}
+        for query in to_drop:
+            drop_from_db = True if '-drop' in query else False
+            query = query.replace('-drop', '')
+            query = query.upper() if '_' not in query else f'{query.split("_")[0].upper()}_{query.split("_")[-1]}' # safeguard
+            self.server_instruction['to_drop'] = {'item':query, 'drop_db':drop_from_db}
+            while self.server_instruction['to_drop']['item']:
+                self.tickspeed_handler.wait()
+        self.server_instruction['boost'] = 0 # Turn off boost thread.
+        self.server_messages['removed_items']['completed'] = 1
+
+
     def add_to_monitoring(self, to_monitor): # TODO private
         '''
             Handles validating and adding coins, symbols or symbol_timeframes into the server monitoring and database
             An example input could be complex like `RVN INJBTC ETHUSDT_4h DOGE XRPBTC_3d, DOTUSDT[30m, 1h, 4h, 1w]`
         '''
-
-        added_coins = set()
+        print(f'to_monitor: {to_monitor}')
         processed_to_monitor = self.process_to_monitor_query(to_monitor)
+        print(f'to_monitor: {to_monitor}')
+        print(f'to_monitor processed: {processed_to_monitor}')
 
         for item in processed_to_monitor:
-            coin, symbol, tradingpair, timeframes = processed_to_monitor[item]
-            coin_obj = Coin(coin)
+            coin, tradingpair, symbol, timeframes = processed_to_monitor[item]
 
             if coin in self.get_stored_coins() and not symbol:
-                self.monitored_coins[coin] = coin_obj.get_symbol_timeframes() # monitor all stored associated with coin
-                self.server_messages['new_monitorings']['added'].add(item)
-                added_coins.add(coin)
-                continue
+                self.coin_objs[coin] = Coin(coin)
+                self.monitored_coins[coin] = self.coin_objs[coin].get_symbol_timeframes() # monitor all stored associated with coin
             elif symbol in self.get_stored_symbols():
+                if not timeframes:
+                    self.coin_objs[coin] = Coin(coin)
+                    self.monitored_coins[coin][symbol] = self.coin_objs[coin].get_symbol_timeframes()[symbol] # monitor all stored associated with symbol
                 for timeframe in timeframes:
                     if f'{symbol}_{timeframe}' not in self.get_stored_symbol_timeframes(): # new timeframe not in db
-                        coin_obj.get_candles(tradingpair, [timeframe]) # we know symbol is valid with Binance
-            elif not tradingpair and not coin_obj.get_candles(tradingpair:='USDT', timeframes:=DEFAULT_TIMEFRAMES):
+                        Coin(coin).get_candles(tradingpair, [timeframe]) # we know symbol is valid with Binance
+            elif not tradingpair and not Coin(coin).get_candles(tradingpair:='USDT', timeframes:=DEFAULT_TIMEFRAMES):
                 self.server_messages['new_monitorings']['binance_exceptions'].add(item)
                 continue # rejected by Binance, invalid coin
-            elif not timeframes and not coin_obj.get_candles(tradingpair, timeframes:=DEFAULT_TIMEFRAMES):
+            elif not timeframes and not Coin(coin).get_candles(tradingpair, timeframes:=DEFAULT_TIMEFRAMES):
                 self.server_messages['new_monitorings']['binance_exceptions'].add(item)
                 continue # rejected by Binance, invalid coin or tradingpair
-            elif not coin_obj.get_candles(tradingpair, timeframes):
+            elif not Coin(coin).get_candles(tradingpair, timeframes):
                 self.server_messages['new_monitorings']['binance_exceptions'].add(item)
                 continue # rejected by Binance, invalid coin or tradingpair
 
@@ -217,12 +325,14 @@ class Notification_server():
                 else:
                     self.monitored_coins[coin][symbol] = timeframes
             else:
+                self.coin_objs[coin] = Coin(coin)
                 self.monitored_coins[coin] = {symbol:timeframes}
             self.server_messages['new_monitorings']['added'].add(item)
-            added_coins.add(coin)
         
         self.server_messages['new_monitorings']['completed'] = 1
-        return added_coins # Return succesfully added coins.
+        print(f'self.server_messages is: {self.server_messages}')
+        self.create_coin_threads(self.server_messages['new_monitorings']['added'])
+        # return added_coins # Return succesfully added coins.
 
 
     def process_to_monitor_query(self, to_monitor): # TODO private
@@ -232,140 +342,109 @@ class Notification_server():
 
         filtered_to_monitor = {}
         for item in to_monitor:
-            filtered_to_monitor[item] = []
-            coin, symbol, tradingpair, timeframes = '', '', '', []
+            # print(f'item: {item}')
+            item_og = item
+            coin, tradingpair, symbol, timeframes = '', '', '', []
 
             if len(item.split('_')) == 2:
                 symbol, timeframe = item.split('_')
+                print(f'item: {item} enters split with: {symbol} : {timeframe}')
                 if timeframe not in INTERVALS:
                     self.server_messages['new_monitorings']['invalid_timeframe'].add(item)
                     continue # invalid timeframe
                 timeframes.append(timeframe)
                 item = item[:item.index('_')]
+                print(f'timeframe split: item now {item}')
             elif '[' in item and ']' == item[-1]:
-                timeframes.extend(item.split('[')[-1][:-1].split(','))
-                if [timeframe for timeframe in timeframes if timeframe not in INTERVALS]:
+                print(f'item: {item} entered multi tf')
+                timeframes.extend([tf.strip() for tf in item.split('[')[-1][:-1].split(',')])
+                print(f'timeframes is now: {timeframes} and valid: {[timeframe for timeframe in timeframes if timeframe not in INTERVALS]}')
+                if [tf for tf in timeframes if tf not in INTERVALS]:
                     self.server_messages['new_monitorings']['invalid_timeframe'].add(item)
                     continue # invalid timeframe present
                 item = item.split('[')[0]
-            
+                print(f'Multiple timeframe split: item now {item}')
+            item = item.upper()
             for std_tradingpair in STANDARD_TRADING_PAIRS:
                 if std_tradingpair in item and len(item.split(std_tradingpair)[0]) >= 3:
-                    coin, tradingpair = item.split(std_tradingpair)
+                    coin, tradingpair = item.split(std_tradingpair)[0], std_tradingpair
                     symbol = item
-                else:
-                    coin = item 
-                if coin and timeframes and not tradingpair:
-                    self.server_messages['new_monitorings']['invalid_syntax'].add(item)
-                    continue # Invalid entry, e.g. BTC-30m, must include tradingpair
-            filtered_to_monitor[item] = [coin, symbol, tradingpair, timeframes]
+                    print(f'item: {item} split into : {coin} and {tradingpair} ==== the split looks like: {item.split(std_tradingpair)}')
+                    break
+            if not coin and timeframes:
+                self.server_messages['new_monitorings']['invalid_syntax'].add(item)
+                continue # Invalid entry, e.g. BTC-30m, must include tradingpair
+            elif not coin:
+                coin = item
+                print(f'coin is: {item}')
+            filtered_to_monitor[item_og] = [coin, tradingpair, symbol, timeframes]
         return filtered_to_monitor
 
 
     def monitored_coin(self, coin):
-        '''Thread starts the monitoring and score calculation of given coin. Handles external signals to drop activity'''
-
+        '''
+            Thread starts the monitoring and score calculation of given coin. Handles external signals to drop activity
+        '''
+        print(f'new thread ------------------ {coin} ----------------------')
+        print(f'monitoring:::: {self.monitored_coins}')
         coin_obj = self.coin_objs[coin]
         while True:
             self.tickspeed_handler.wait() # Releases every server tick.
 
             # Check to see whether coin needs to be dropped
-            if coin in self.server_instruction['drop']['to_drop']:
-                to_drop = self.server_instruction['drop']
-                self.server_instruction['drop'] = {'to_drop':''}
-                if to_drop['to_drop'] in self.get_stored_coins():
-                    if to_drop['db_drop']:
+            if coin in self.server_instruction['to_drop']['item']:
+                to_drop = self.server_instruction['to_drop']
+                print(f'THREAD: {coin} to_drop: {to_drop}')
+                self.server_instruction['to_drop'] = {'item':''}
+                if to_drop['item'] in self.get_stored_coins():
+                    print(f'drop coin: {to_drop}')
+                    if to_drop['drop_db']:
                         coin_obj.remove_coin() # Remove from database.
-                    self.monitored_coins.pop(to_drop['coin'])
-                    self.server_messages['removed_items']['to_drop'].remove(to_drop['to_drop'])
-                elif to_drop['to_drop'] in self.get_stored_symbols():
-                    if to_drop['db_drop']:
-                        coin_obj.remove_symbol(to_drop['symbol'])
-                    self.monitored_coins[coin].pop(to_drop['symbol'])
-                    self.server_messages['removed_items']['to_drop'].remove(to_drop['to_drop'])
-                elif to_drop['to_drop'] in self.get_stored_symbol_timeframes():
-                    symbol, timeframe = to_drop['to_drop'].split('_')
-                    if to_drop['db_drop']:
-                        coin_obj.remove_timeframe(to_drop['to_drop'])
+                    self.monitored_coins.pop(to_drop['item'])
+                    self.server_messages['removed_items']['dropped'].add(to_drop['item'])
+                elif to_drop['item'] in self.get_stored_symbols():
+                    print(f'drop symbol: {to_drop}')
+                    if to_drop['drop_db']:
+                        coin_obj.remove_symbol(to_drop['item'])
+                    self.monitored_coins[coin].pop(to_drop['item'])
+                    self.server_messages['removed_items']['dropped'].add(to_drop['item'])
+                elif to_drop['item'] in self.get_stored_symbol_timeframes():
+                    symbol, timeframe = to_drop['item'].split('_')
+                    print(f'drop timeframe: {symbol}_{timeframe}')
+                    if to_drop['drop_db']:
+                        coin_obj.remove_timeframe(to_drop['item'])
                     self.monitored_coins[coin][symbol].remove(timeframe)
-                    self.server_messages['removed_items']['to_drop'].remove(to_drop['to_drop'])
+                    self.server_messages['removed_items']['dropped'].add(to_drop['item'])
                 if coin not in self.monitored_coins or not self.monitored_coins[coin]:
+                    print(f'dropping thread: {coin}')
                     return 0 # Drop this coin thread.
 
             # Check to see whether request timer has activated.
-            if coin in self.server_instruction['request_interval']:
-                self.server_instruction['request_interval'].remove(coin) # Let's request_interval thread know which coins have started scoring.
-                for symbol in self.monitored_coins[coin]:
-                    score_summary = coin_obj.current_score(symbol, self.monitored_coins[coin][symbol])
-                    signal = score_summary[4]
-                    if coin in self.server_instruction['drop']['to_drop']:
-                        continue # If user just entered coin to drop when score already processed.
-                    if symbol not in self.server_messages['current_score']:
-                        self.server_messages['current_score'][symbol] = score_summary
-                    if signal:
-                        self.server_messages['signals'][symbol] = [
-                            signal,
-                            datetime.now().strftime("%I:%M %p"),
-                            score_summary
-                        ]
+            # if coin in self.server_instruction['request_interval']:
+            #     self.server_instruction['request_interval'].remove(coin) # Let's request_interval thread know which coins have started scoring.
+            #     for symbol in self.monitored_coins[coin]:
+            #         score_summary = coin_obj.current_score(symbol, self.monitored_coins[coin][symbol])
+            #         signal = score_summary[4]
+            #         if coin in self.server_instruction['to_drop']['to_drop']:
+            #             continue # If user just entered coin to drop when score already processed.
+            #         if symbol not in self.server_messages['current_score']:
+            #             self.server_messages['current_score'][symbol] = score_summary
+            #         if signal:
+            #             self.server_messages['signals'][symbol] = [
+            #                 signal,
+            #                 datetime.now().strftime("%I:%M %p"),
+            #                 score_summary
+            #             ]
 
-                    try:
-                        if self.mode_1_messages[coin] and not self.server_instruction['new_user']:
-                            self.mode_1_messages.pop(coin) # To prevent recuring posting of mode1 type messages.
-                    except KeyError:
-                        pass
+            #         try:
+            #             if self.mode_1_messages[coin] and not self.server_instruction['new_user']:
+            #                 self.mode_1_messages.pop(coin) # To prevent recuring posting of mode1 type messages.
+            #         except KeyError:
+            #             pass
 
                 if self.MODE_2_REQUEST:
                     # coin_obj.generate_result_files(mode='update')
                     self.MODE_2_REQUEST -= 1 # Once the value becomes zero, any user thread which is ready will send a mode 2 email.
-
-
-    def monitor_all_coins(self, to_monitor=[]):
-        '''Hanndles server coin monitoring initiation and 'all' command'''
-
-        if not to_monitor:
-            to_monitor = self.get_stored_coins()
-            if not to_monitor: # no coins in db
-                self.input_monitor_new() # prompt user to enter coin.
-        self.server_messages['new_monitorings'] = {
-            'added':set(),
-            'invalid_syntax':set(),
-            'invalid_timeframe':set(),
-            'binance_exceptions':set(),
-            'completed':0
-        }
-        self.add_new_coins(self.add_to_monitoring(to_monitor)) # verify input and make new coin threads
-
-
-    def get_stored_coins(self):
-        '''returns list of coins stored in database'''
-
-        return [path.split('/')[-1] for path in glob(f'{self.data_path}/*') if 'binance_scan' not in path]
-
-
-    def get_stored_symbols(self):
-        '''returns a dictionary containing all symbols stored in the database'''
-
-        stored_symbols = []
-        for coin in self.get_stored_coins():
-            stored_symbols.extend(list(Coin(coin).get_symbol_timeframes()))
-        return stored_symbols
-
-
-    def get_stored_symbol_timeframes(self):
-        '''returns a dictionary containing all symbol_timeframes stored in the database'''
-
-        stored_symbol_timeframes = []
-        for coin in self.get_stored_coins():
-            for symbol, timeframes in Coin(coin).get_symbol_timeframes().items():
-                stored_symbol_timeframes.extend([f'{symbol}_{tf}' for tf in timeframes])
-        return stored_symbol_timeframes
-    
-
-    def find_coin(self, symbol):
-        '''Returns coin from given symbol string'''
-        coin = [symbol.split(tradingpair)[0] for tradingpair in STANDARD_TRADING_PAIRS if tradingpair in symbol]
-        return coin[0] if coin else None
 
 
     def get_retain_scoring(self):
@@ -451,8 +530,6 @@ class Notification_server():
                     continue
                 break
 
-       
-
             new_messages = [m_type for m_type in self.server_messages if self.server_messages[m_type]
                         and m_type not in ['current_score', 'removed_items', 'new_monitorings']]
 
@@ -479,6 +556,7 @@ class Notification_server():
                     invalid_syntax_set = self.server_messages['new_monitorings']['invalid_syntax']
                     invalid_timeframes = self.server_messages['new_monitorings']['invalid_timeframe']
                     binance_exceptions = self.server_messages['new_monitorings']['binance_exceptions']
+                    self.server_messages['new_monitorings'] = {}
                     print('Adding coins to server monitoring has completed!')
                     print(f'The following items will start being monitored: {newly_added_set}')
                     if invalid_syntax_set:
@@ -491,8 +569,9 @@ class Notification_server():
                     self.server_messages['current_monitoring'] = 1 # stdout db and monitoring summary
 
                 if 'remove_msg_ready' in new_messages:
-                    removed_set = self.server_messages['removed_items']['to_drop']
+                    removed_set = self.server_messages['removed_items']['dropped']
                     original_set = self.server_messages['removed_items']['initial_queries']
+                    self.server_messages['removed_items'] = {}
                     failed_queries = original_set.difference(removed_set)
                     dropped_monitorings = []
                     dropped_databases = []
@@ -502,7 +581,7 @@ class Notification_server():
                             dropped_databases.append(query)
                         else:
                             dropped_monitorings.append(query)
-                    if dropped_databases:
+                    if dropped_monitorings:
                         print(f'The following queries were removed from monitoring: {dropped_monitorings}')
                     if dropped_databases:
                         print(f'The following queries were removed from database: {dropped_databases}')
@@ -536,7 +615,7 @@ class Notification_server():
 
                 if self.server_messages['current_monitoring']:
                     self.server_messages['current_monitoring'] = 0
-                    if not self.get_stored_coins() or not self.monitored_coins():
+                    if not self.get_stored_coins() or not self.monitored_coins:
                         print(f"Server has no stored or monitored coins. Enter command 'monitor' to add new coins.")
                     else:
                         print(f"Server has the following coins in the database:")
@@ -546,7 +625,7 @@ class Notification_server():
                                 print(f'{symbol}: {stored_symbol_timeframes[symbol]}')
                         
                         print(f"\nServer is currently monitoring:")
-                        for symbol in self.monitored_coins():
+                        for symbol in self.monitored_coins:
                             print(f'{symbol}: {self.monitored_coins[symbol]}')
                     print()
 
@@ -610,6 +689,37 @@ class Notification_server():
                     pass
 
                 print(f'{"*"*25} END server messages {"*"*25}')
+
+
+    def get_stored_coins(self):
+        '''returns list of coins stored in database'''
+
+        return [path.split('/')[-1] for path in glob(f'{self.data_path}/*') if 'binance_scan' not in path]
+
+
+    def get_stored_symbols(self):
+        '''returns a dictionary containing all symbols stored in the database'''
+
+        stored_symbols = []
+        for coin in self.get_stored_coins():
+            stored_symbols.extend(list(Coin(coin).get_symbol_timeframes()))
+        return stored_symbols
+
+
+    def get_stored_symbol_timeframes(self):
+        '''returns a dictionary containing all symbol_timeframes stored in the database'''
+
+        stored_symbol_timeframes = []
+        for coin in self.get_stored_coins():
+            for symbol, timeframes in Coin(coin).get_symbol_timeframes().items():
+                stored_symbol_timeframes.extend([f'{symbol}_{tf}' for tf in timeframes])
+        return stored_symbol_timeframes
+    
+
+    def find_coin(self, symbol):
+        '''Returns coin from given symbol string'''
+        coin = [symbol.split(tradingpair)[0] for tradingpair in STANDARD_TRADING_PAIRS if tradingpair in symbol]
+        return coin[0] if coin else None
 
 
     def toggle_stdout(self):
@@ -694,87 +804,6 @@ class Notification_server():
         while self.server_instruction['boost']:
             time.sleep(boost)
         self.SERVER_SPEED = original_SERVER_SPEED
-
-    
-    def input_monitor_new(self):
-        '''Handles user input for specifying multiple new coins, trading pairs or timeframes to monitor by the server'''
-
-        self.server_messages['current_monitoring'] = 1
-        print(f'\n{"="*10}INSTRUCTIONS{"="*10}')
-        print('List coins, symbols or symbol_timeframes to start monitoring.')
-        print('Entering a coin or symbol already present in the database will start monitoring all their timeframes.')
-        print(f'If the coin or symbol is not present in the database, they will be monitored with standard timeframes {DEFAULT_TIMEFRAMES} USDT pair.')
-        print('To specify a list of timeframes to monitor, use [] like `BTCUSDT[1h, 4h, 12h, 1w, 1M]`')
-        print('To specify single timeframes to monitor, use `ETHBTC_1d`')
-        print('Example: `RVN INJBTC ETHUSDT_4h DOGE XRPBTC_3d, DOTUSDT[30m, 1h, 4h, 1w]`')
-        print('Seperate entries by space.\n')
-        self.server_instruction['pause_stdout'] = 1 # Stops all server stdout for cleaner user interaction.
-
-        to_monitor = set(input('To monitor >>> ').upper().split())
-        self.server_messages['new_monitorings'] = {
-            'added':set(),
-            'invalid_syntax':set(),
-            'invalid_timeframe':set(),
-            'binance_exceptions':set(),
-            'completed':0
-        }
-        self.server_instruction['pause_stdout'] = 0 # Unpause server stdout.
-        self.add_new_coins(self.add_to_monitoring(to_monitor)) # verify input and make new coin threads
-
-
-    def add_new_coins(self, added_coins):
-        '''Handles creating new coin threads if they are currently not being monitored by server'''
-
-        for coin in added_coins:
-            if not [thread for thread in list_threads() if str(thread).split(',')[0].split('(')[1] == coin]:
-                # Means server is not currently monitoring this coin, so start new thread. 
-                Thread(target=self.monitored_coin, name=coin, args=(coin,), daemon=True).start()
-
-    
-    def input_drop_coin(self):
-        '''Handles user input for dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested'''
-
-        self.server_messages['current_monitoring'] = 1
-        print(f'\n{"="*10}INSTRUCTIONS{"="*10}')
-        print('List coins, symbols or symbol_timeframes to stop monitoring. Append `-drop` to remove those from the database.')
-        print('Entering a coin will drop all related symbols.')
-        print('Entering a symbol drops all related symbol_timeframes.')
-        print('Entering a symbol_timeframe drops only that symbol_timeframe.')
-        print('Example: `RVN INJBTC ETHUSDT_4h DOGE-drop XRPBTC_3d-drop`')
-        print('Seperate entries by space.\n')
-        self.server_instruction['pause_stdout'] = 1 # Stops all server stdout for cleaner user interaction.
-
-        to_drop = set(input('To drop >>> ').upper().split())
-        self.server_instruction['pause_stdout'] = 0 # Unpause server stdout.
-        Thread(target=self.drop_coins, args=(to_drop,), daemon=True).start()
-
-
-    def drop_coins(self, to_drop):
-        '''Handles removing given coin/tradingpair/timeframe from Server monitoring or database'''
-
-        Thread(target=self.boost_speed, args=(0.5,), daemon=True).start() # Temporarily boost server speed for faster processing. 
-        print(f'to_drop is: {to_drop}')
-        self.server_messages['removed_items'] = {'to_drop':to_drop.copy(), 'initial_queries':to_drop.copy(), 'completed':0}
-        for query in to_drop:
-            drop_from_db = True if '-DROP' in query == 1 else False
-            query = query.replace('-DROP', '')
-            self.server_instruction['drop'] = {'to_drop':query, 'db_drop':drop_from_db}
-            while self.server_instruction['to_drop']:
-                self.tickspeed_handler.wait()
-        self.server_instruction['boost'] = 0 # Turn off boost thread.
-        self.server_messages['removed_items']['completed'] = 1
-
- 
-    @staticmethod
-    def re_search(string):
-        '''Performs search for invalid symbols'''
-        if re.search('[,.|!~`@#$%^&*():;/_=+\[\]\{\}]', string): # TODO just do the inverse, list chars which are allowed only
-            print(f"Invalid characters used in {string}.")
-            return 1
-        if re.search('-', string):
-            if not re.search('-drop', string, re.IGNORECASE):
-                print(f"Invalid characters used in {string}.")
-                return 1
 
 
     def server_user(self, gmail, owner=False):
@@ -969,6 +998,6 @@ class Notification_server():
 
 if __name__ == '__main__':
     # Example: <python3 notification_server.py BTC LTC ETH INJ>
-    server = Notification_server(coins=sys.argv[1:])
+    server = Notification_server(to_monitor=sys.argv[1:])
     server.server_shutdown.wait() # Pauses main thread until shutdown_server method is invoked.
     print("Server shut down.")
