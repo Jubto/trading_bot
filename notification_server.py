@@ -188,17 +188,9 @@ class Notification_server():
             to_monitor = self.get_stored_coins()
             if not to_monitor: # no coins in db
                 self.monitor_new_coin() # prompt user to enter coin.
-        self.server_messages['new_monitorings'] = {
-            'added':set(),
-            'invalid_syntax':set(),
-            'invalid_timeframe':set(),
-            'binance_exceptions':set(),
-            'completed':0
-        }
-        print(f'monitor_all_coins output: {to_monitor}')
-        Thread(target=self.add_to_monitoring, args=(to_monitor,), daemon=True).start()
-        # self.create_coin_threads(self.add_to_monitoring(to_monitor)) # verify input and make new coin threads
-        # self.create_coin_threads(Thread(target=self.add_to_monitoring, args=(to_monitor,), daemon=True).start())
+        else:
+            print(f'monitor_all_coins output: {to_monitor}')
+            Thread(target=self.add_to_monitoring, args=(to_monitor,), daemon=True).start()
 
 
     def monitor_new_coin(self):
@@ -206,27 +198,20 @@ class Notification_server():
             Handles user input for specifying multiple new coins, trading pairs or timeframes to monitor by the server
         '''
 
-        self.server_messages['current_monitoring'] = 1
+        # self.server_messages['current_monitoring'] = 1 TODO either don't include this or perhaps make it a stand alone funciton which returns
+        # content and we can just print that differently here vs stdout
         print(f'\n{"="*10}INSTRUCTIONS{"="*10}')
         print('List coins, symbols or symbol_timeframes which you want to start monitoring.')
         print('If said coin or symbol is already present in the database, all their their timeframes will be monitored.')
         print(f'If the coin or symbol is not present in the database, they will be monitored with standard timeframes {DEFAULT_TIMEFRAMES} USDT pair.')
         print('Or you can specify a list of timeframes to monitor, use [] like `BTCUSDT[1h,4h,12h,1w,1M]`, use no spaces inbetween.')
         print('Or to specify single timeframes to monitor, use `ETHBTC_1d`')
-        print('Example: `RVN INJBTC ETHUSDT_4h DOGE XRPBTC_3d DOTUSDT[30m,1h,4h,1w]`')
+        print('Example: `RVN INJBTC ETHUSDT_4h DOGE XRPBTC_3d DOTUSDT[4h,3d,1w,1M]`')
         print('Seperate entries by space.\n')
         self.server_instruction['pause_stdout'] = 1 # Stops all server stdout for cleaner user interaction.
 
         to_monitor = set(input('To monitor >>> ').split())
-        self.server_messages['new_monitorings'] = {
-            'added':set(),
-            'invalid_syntax':set(),
-            'invalid_timeframe':set(),
-            'binance_exceptions':set(),
-            'completed':0
-        }
         self.server_instruction['pause_stdout'] = 0 # Unpause server stdout.
-        # self.create_coin_threads(self.add_to_monitoring(to_monitor)) # verify input and make new coin threads
         Thread(target=self.add_to_monitoring, args=(to_monitor,), daemon=True).start()
         # self.create_coin_threads(Thread(target=self.add_to_monitoring, args=(to_monitor,), daemon=True).start()) # verify input and make new coin threads
 
@@ -248,7 +233,7 @@ class Notification_server():
             Handles user input for dropping a coin, tradingpair or timeframe from being monitored and removes from database if requested
         '''
 
-        self.server_messages['current_monitoring'] = 1
+        # self.server_messages['current_monitoring'] = 1
         print(f'\n{"="*10}INSTRUCTIONS{"="*10}')
         print('List coins, symbols or symbol_timeframes to stop monitoring. Append `-drop` to remove those from the database.')
         print('Entering a coin will drop all related symbols.')
@@ -289,11 +274,19 @@ class Notification_server():
             Handles validating and adding coins, symbols or symbol_timeframes into the server monitoring and database
             An example input could be complex like `RVN INJBTC ETHUSDT_4h DOGE XRPBTC_3d, DOTUSDT[30m, 1h, 4h, 1w]`
         '''
+        print(f'add_to_monitoring called +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++')
+        self.server_messages['new_monitorings'] = {
+            'added':set(),
+            'invalid_syntax':set(),
+            'invalid_timeframe':set(),
+            'binance_exceptions':set(),
+            'completed':0
+        }
         print(f'to_monitor: {to_monitor}')
         processed_to_monitor = self.process_to_monitor_query(to_monitor)
-        print(f'to_monitor: {to_monitor}')
         print(f'to_monitor processed: {processed_to_monitor}')
 
+        validated_added_coins = set()
         for item in processed_to_monitor:
             coin, tradingpair, symbol, timeframes = processed_to_monitor[item]
 
@@ -327,11 +320,13 @@ class Notification_server():
             else:
                 self.coin_objs[coin] = Coin(coin)
                 self.monitored_coins[coin] = {symbol:timeframes}
+            print(f"input was: {coin, tradingpair, symbol, timeframes}, adding :{item} to monitoring: {self.server_messages['new_monitorings']['added']}")
             self.server_messages['new_monitorings']['added'].add(item)
+            validated_added_coins.add(coin)
         
         self.server_messages['new_monitorings']['completed'] = 1
         print(f'self.server_messages is: {self.server_messages}')
-        self.create_coin_threads(self.server_messages['new_monitorings']['added'])
+        self.create_coin_threads(validated_added_coins)
         # return added_coins # Return succesfully added coins.
 
 
@@ -546,7 +541,7 @@ class Notification_server():
             if self.server_messages['new_monitorings']:
                 if self.server_messages['new_monitorings']['completed']:
                     new_messages.append('monitoring_msg_ready')
-
+            print(f'new_messages now: {new_messages}***********************************')
             if new_messages:
                 print(f'{"*"*25} NEW server messages {"*"*25}')
                 print(f'Timestamp: {datetime.now().strftime("%d/%m/%y %I:%M %p")}\n')

@@ -81,7 +81,7 @@ class Coin():
         If coin has data stored, then this will retreve only the latest candle data. 	
         '''
         print(f'get_candle COIN: {self.coin} got: {tradingpair} | {timeframes}')
-        return
+        # return
         symbol = self.coin.upper() + tradingpair.upper()
         for timeframe in timeframes:
             candlestick_path = self.get_candlestick_path(symbol, timeframe)
@@ -192,7 +192,7 @@ class Coin():
         symbol_timeframes_list = []
         symbol_timeframes_dict = {}
         for symbol in stored_symbols:
-            stored_timeframes = [f.split('/')[-1].split('_')[-1].split('.')[0] for f in glob(f'{self.candlestick_path}/{symbol}/*')]
+            stored_timeframes = [f.split('/')[-1].split('_')[-1].split('.')[0] for f in glob(f'{self.candlestick_path}/{symbol}/[!a]*')]
             stored_timeframes.sort(key=lambda tf : INTERVALS.index(tf))
             symbol_timeframes_dict[symbol] = stored_timeframes
             symbol_timeframes_list.extend([f'{symbol}_{tf}' for tf in stored_timeframes])
@@ -252,7 +252,7 @@ class Coin():
         '''
 
         os.mkdir(f'{self.candlestick_path}/{symbol}')
-        open(f'{self.candlestick_path}/{symbol}/{symbol}_analysis.json', 'w').close()
+        open(f'{self.candlestick_path}/{symbol}/analysis_{symbol}.json', 'w').close()
         os.mkdir(f'{self.historical_scoring_path}/{symbol}')
         os.mkdir(f'{self.look_ahead_path}/{symbol}')
         os.mkdir(f'{self.retain_scoring_path}/{symbol}')
@@ -279,7 +279,7 @@ class Coin():
         
         stored_symbol_timeframes = self.get_symbol_timeframes()
         for symbol in stored_symbol_timeframes:
-            with open(f'{self.candlestick_path}/{symbol}/{symbol}_analysis.json', 'r') as jf:
+            with open(f'{self.candlestick_path}/{symbol}/analysis_{symbol}.json', 'r') as jf:
                 scoring_json = json.load(jf)
                 stored_json_timeframes = set(scoring_json.keys())
                 stored_csv_timeframes = set(stored_symbol_timeframes[symbol])
@@ -297,7 +297,7 @@ class Coin():
                     scoring_json.pop(outdated_timeframe)
 
             if new_timeframes or outdated_timeframes:
-                with open(f'{self.candlestick_path}/{symbol}/{symbol}_analysis.json', 'w') as jf:
+                with open(f'{self.candlestick_path}/{symbol}/analysis_{symbol}.json', 'w') as jf:
                     json.dump(scoring_json, jf, indent=4)
                 return 1 # update performed
             return 0 # no update performed
@@ -310,7 +310,7 @@ class Coin():
 
         stored_symbol_timeframes = self.get_symbol_timeframes()
         for symbol in stored_symbol_timeframes:
-            with open(f'{self.candlestick_path}/{symbol}/{symbol}_analysis.json', 'r') as jf:
+            with open(f'{self.candlestick_path}/{symbol}/analysis_{symbol}.json', 'r') as jf:
                 scoring_json = json.load(jf)
             for timeframe in stored_symbol_timeframes[symbol]:
                 with open(self.get_candlestick_path(symbol, timeframe)) as f:
@@ -337,7 +337,7 @@ class Coin():
                         for metric in scoring_json[timeframe]:
                             bisect.insort(scoring_json[timeframe][metric], new_data[metric]) # add to sorted list
     
-            with open(f'{self.candlestick_path}/{symbol}/{symbol}_analysis.json', 'w') as jf:
+            with open(f'{self.candlestick_path}/{symbol}/analysis_{symbol}.json', 'w') as jf:
                 json.dump(scoring_json, jf, indent=4)
 
 
@@ -379,7 +379,7 @@ class Coin():
             score_dict[timeframe] = self.percent_changes(float(klines[1]), float(klines[2]), float(klines[3]), float(klines[4]))
             latest_price = klines[4]
 
-        with open(f'{self.candlestick_path}/{symbol}/{symbol}_analysis.json', 'r') as jf:
+        with open(f'{self.candlestick_path}/{symbol}/analysis_{symbol}.json', 'r') as jf:
             scoring_json = json.load(jf)
         for timeframe in score_dict:
             bull_score, bear_score, change_score = 0, 0, 0
